@@ -249,6 +249,36 @@ describe('reactivity/effect', () => {
     expect(dummy).toBe(newFunc)
   })
 
+  it('should observe chained getters relying on this', () => {
+    const obj = reactive({
+      a: 1,
+      get b() {
+        return this.a
+      }
+    })
+
+    let dummy
+    effect(() => (dummy = obj.b))
+    expect(dummy).toBe(1)
+    obj.a++
+    expect(dummy).toBe(2)
+  })
+
+  it('should observe methods relying on this', () => {
+    const obj = reactive({
+      a: 1,
+      b() {
+        return this.a
+      }
+    })
+
+    let dummy
+    effect(() => (dummy = obj.b()))
+    expect(dummy).toBe(1)
+    obj.a++
+    expect(dummy).toBe(2)
+  })
+
   it('should not observe set operations without a value change', () => {
     let hasDummy, getDummy
     const obj = reactive({ prop: 'value' })
@@ -505,6 +535,18 @@ describe('reactivity/effect', () => {
     expect(dummy).toBe(1)
   })
 
+  it('lazy', () => {
+    const obj = reactive({ foo: 1 })
+    let dummy
+    const runner = effect(() => (dummy = obj.foo), { lazy: true })
+    expect(dummy).toBe(undefined)
+
+    expect(runner()).toBe(1)
+    expect(dummy).toBe(1)
+    obj.foo = 2
+    expect(dummy).toBe(2)
+  })
+
   it('scheduler', () => {
     let runner: any, dummy
     const scheduler = jest.fn(_runner => {
@@ -648,5 +690,15 @@ describe('reactivity/effect', () => {
     expect(dummy).toBe(0)
     obj.foo = { prop: 1 }
     expect(dummy).toBe(1)
+  })
+
+  it('should not be trigger when the value and the old value both are NaN', () => {
+    const obj = reactive({
+      foo: NaN
+    })
+    const fnSpy = jest.fn(() => obj.foo)
+    effect(fnSpy)
+    obj.foo = NaN
+    expect(fnSpy).toHaveBeenCalledTimes(1)
   })
 })
