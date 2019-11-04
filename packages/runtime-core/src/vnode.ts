@@ -14,16 +14,32 @@ import {
 } from './component'
 import { RawSlots } from './componentSlots'
 import { ShapeFlags } from './shapeFlags'
-import { isReactive } from '@vue/reactivity'
+import { isReactive, Ref } from '@vue/reactivity'
 import { AppContext } from './apiApp'
-import { SuspenseBoundary } from './suspense'
+import { SuspenseBoundary } from './rendererSuspense'
 import { DirectiveBinding } from './directives'
+import { Suspense as SuspenseImpl } from './rendererSuspense'
 
-export const Fragment = Symbol(__DEV__ ? 'Fragment' : undefined)
-export const Portal = Symbol(__DEV__ ? 'Portal' : undefined)
-export const Suspense = Symbol(__DEV__ ? 'Suspense' : undefined)
+export const Fragment = (Symbol(__DEV__ ? 'Fragment' : undefined) as any) as {
+  // type differentiator for h()
+  __isFragment: true
+}
+export const Portal = (Symbol(__DEV__ ? 'Portal' : undefined) as any) as {
+  // type differentiator for h()
+  __isPortal: true
+}
 export const Text = Symbol(__DEV__ ? 'Text' : undefined)
 export const Comment = Symbol(__DEV__ ? 'Comment' : undefined)
+
+// Export Suspense with casting to avoid circular type dependency between
+// `suspense.ts` and `createRenderer.ts` in exported types.
+// A circular type dependency causes tsc to generate d.ts with dynmaic import()
+// calls using realtive paths, which works for separate d.ts files, but will
+// fail after d.ts rollup with API Extractor.
+const Suspense = ((__FEATURE_SUSPENSE__ ? SuspenseImpl : null) as any) as {
+  __isSuspense: true
+}
+export { Suspense }
 
 export type VNodeTypes =
   | string
@@ -33,6 +49,12 @@ export type VNodeTypes =
   | typeof Text
   | typeof Comment
   | typeof Suspense
+
+export interface VNodeProps {
+  [key: string]: any
+  key?: string | number
+  ref?: string | Ref | ((ref: object) => void)
+}
 
 type VNodeChildAtom<HostNode, HostElement> =
   | VNode<HostNode, HostElement>
@@ -61,7 +83,7 @@ export type NormalizedChildren<HostNode = any, HostElement = any> =
 export interface VNode<HostNode = any, HostElement = any> {
   _isVNode: true
   type: VNodeTypes
-  props: Record<any, any> | null
+  props: VNodeProps | null
   key: string | number | null
   ref: string | Function | null
   children: NormalizedChildren<HostNode, HostElement>
@@ -187,11 +209,13 @@ export function createVNode(
   // encode the vnode type information into a bitmap
   const shapeFlag = isString(type)
     ? ShapeFlags.ELEMENT
-    : isObject(type)
-      ? ShapeFlags.STATEFUL_COMPONENT
-      : isFunction(type)
-        ? ShapeFlags.FUNCTIONAL_COMPONENT
-        : 0
+    : __FEATURE_SUSPENSE__ && (type as any).__isSuspense === true
+      ? ShapeFlags.SUSPENSE
+      : isObject(type)
+        ? ShapeFlags.STATEFUL_COMPONENT
+        : isFunction(type)
+          ? ShapeFlags.FUNCTIONAL_COMPONENT
+          : 0
 
   const vnode: VNode = {
     _isVNode: true,
@@ -257,13 +281,14 @@ export function cloneVNode<T, U>(
     appContext: vnode.appContext,
     dirs: vnode.dirs,
 
-    // these should be set to null since they should only be present on
-    // mounted VNodes. If they are somehow not null, this means we have
-    // encountered an already-mounted vnode being used again.
-    component: null,
-    suspense: null,
-    el: null,
-    anchor: null
+    // These should technically only be non-null on mounted VNodes. However,
+    // they *should* be copied for kept-alive vnodes. So we just always copy
+    // them since them being non-null during a mount doesn't affect the logic as
+    // they will simply be overwritten.
+    component: vnode.component,
+    suspense: vnode.suspense,
+    el: vnode.el,
+    anchor: vnode.anchor
   }
 }
 

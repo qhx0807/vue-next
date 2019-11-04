@@ -26,6 +26,8 @@ import {
   onRenderTracked,
   onBeforeUnmount,
   onUnmounted,
+  onActivated,
+  onDeactivated,
   onRenderTriggered,
   DebuggerHook,
   ErrorCapturedHook
@@ -63,6 +65,14 @@ export interface ComponentOptionsBase<
   components?: Record<string, Component>
   directives?: Record<string, Directive>
   inheritAttrs?: boolean
+
+  // type-only differentiator to separate OptionWihtoutProps from a constructor
+  // type returned by createComponent() or FunctionalComponent
+  call?: never
+  // type-only differentiators for built-in Vnode types
+  __isFragment?: never
+  __isPortal?: never
+  __isSuspense?: never
 }
 
 export type ComponentOptionsWithoutProps<
@@ -226,8 +236,8 @@ export function applyOptions(
     mounted,
     beforeUpdate,
     updated,
-    // TODO activated
-    // TODO deactivated
+    activated,
+    deactivated,
     beforeUnmount,
     unmounted,
     renderTracked,
@@ -376,6 +386,12 @@ export function applyOptions(
   }
   if (updated) {
     onUpdated(updated.bind(ctx))
+  }
+  if (activated) {
+    onActivated(activated.bind(ctx))
+  }
+  if (deactivated) {
+    onDeactivated(deactivated.bind(ctx))
   }
   if (errorCaptured) {
     onErrorCaptured(errorCaptured.bind(ctx))

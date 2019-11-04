@@ -27,7 +27,7 @@ import {
   callWithAsyncErrorHandling
 } from './errorHandling'
 import { onBeforeUnmount } from './apiLifecycle'
-import { queuePostRenderEffect } from './createRenderer'
+import { queuePostRenderEffect } from './renderer'
 
 export type WatchHandler<T = any> = (
   value: T,
@@ -68,6 +68,9 @@ export function watch<T>(
 ): StopHandle
 
 // overload #3: array of multiple sources + cb
+// Readonly constraint helps the callback to correctly infer value types based
+// on position in the source array. Otherwise the values will get a union type
+// of all possible value types.
 export function watch<T extends Readonly<WatcherSource<unknown>[]>>(
   sources: T,
   cb: WatchHandler<MapSources<T>>,
@@ -138,8 +141,7 @@ function doWatch(
 
   let cleanup: Function
   const registerCleanup: CleanupRegistrator = (fn: () => void) => {
-    // TODO wrap the cleanup fn for error handling
-    cleanup = runner.onStop = () => {
+    cleanup = runner.options.onStop = () => {
       callWithErrorHandling(fn, instance, ErrorCodes.WATCH_CLEANUP)
     }
   }
