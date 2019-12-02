@@ -614,8 +614,7 @@ export function createRenderer<
       }
       if (oldProps !== EMPTY_OBJ) {
         for (const key in oldProps) {
-          if (isReservedProp(key)) continue
-          if (!(key in newProps)) {
+          if (!isReservedProp(key) && !(key in newProps)) {
             hostPatchProp(
               el,
               key,
@@ -1430,14 +1429,15 @@ export function createRenderer<
           queuePostRenderEffect(() => transition!.enter(el!), parentSuspense)
         } else {
           const { leave, delayLeave, afterLeave } = transition!
+          const remove = () => hostInsert(el!, container, anchor)
           const performLeave = () => {
             leave(el!, () => {
-              hostInsert(el!, container, anchor)
+              remove()
               afterLeave && afterLeave()
             })
           }
           if (delayLeave) {
-            delayLeave(performLeave)
+            delayLeave(el!, remove, performLeave)
           } else {
             performLeave()
           }
@@ -1526,7 +1526,7 @@ export function createRenderer<
         const { leave, delayLeave } = transition
         const performLeave = () => leave(el!, remove)
         if (delayLeave) {
-          delayLeave(performLeave)
+          delayLeave(vnode.el!, remove, performLeave)
         } else {
           performLeave()
         }
