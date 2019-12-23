@@ -7,7 +7,7 @@ export interface StylePreprocessor {
 export interface StylePreprocessorResults {
   code: string
   map?: object
-  errors: Array<Error>
+  errors: Error[]
 }
 
 // .scss/.sass processor
@@ -104,7 +104,9 @@ const styl: StylePreprocessor = {
   }
 }
 
-export const processors: Record<string, StylePreprocessor> = {
+export type PreprocessLang = 'less' | 'sass' | 'scss' | 'styl' | 'stylus'
+
+export const processors: Record<PreprocessLang, StylePreprocessor> = {
   less,
   sass,
   scss,
