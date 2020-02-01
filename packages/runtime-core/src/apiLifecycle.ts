@@ -2,7 +2,8 @@ import {
   ComponentInternalInstance,
   LifecycleHooks,
   currentInstance,
-  setCurrentInstance
+  setCurrentInstance,
+  isInSSRComponentSetup
 } from './component'
 import { ComponentPublicInstance } from './componentProxy'
 import { callWithAsyncErrorHandling, ErrorTypeStrings } from './errorHandling'
@@ -65,7 +66,8 @@ export function injectHook(
 export const createHook = <T extends Function = () => any>(
   lifecycle: LifecycleHooks
 ) => (hook: T, target: ComponentInternalInstance | null = currentInstance) =>
-  injectHook(lifecycle, hook, target)
+  // post-create lifecycle registrations are noops during SSR
+  !isInSSRComponentSetup && injectHook(lifecycle, hook, target)
 
 export const onBeforeMount = createHook(LifecycleHooks.BEFORE_MOUNT)
 export const onMounted = createHook(LifecycleHooks.MOUNTED)
@@ -87,6 +89,10 @@ export type ErrorCapturedHook = (
   instance: ComponentPublicInstance | null,
   info: string
 ) => boolean | void
-export const onErrorCaptured = createHook<ErrorCapturedHook>(
-  LifecycleHooks.ERROR_CAPTURED
-)
+
+export const onErrorCaptured = (
+  hook: ErrorCapturedHook,
+  target: ComponentInternalInstance | null = currentInstance
+) => {
+  injectHook(LifecycleHooks.ERROR_CAPTURED, hook, target)
+}

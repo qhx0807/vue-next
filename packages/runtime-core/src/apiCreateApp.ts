@@ -16,16 +16,15 @@ export interface App<HostElement = any> {
   component(name: string, component: Component): this
   directive(name: string): Directive | undefined
   directive(name: string, directive: Directive): this
-  mount(
-    rootComponent:
-      | Component
-      // for compatibility with defineComponent() return types
-      | { new (): ComponentPublicInstance<any, any, any, any, any> },
-    rootContainer: HostElement | string,
-    rootProps?: Data
-  ): ComponentPublicInstance
+  mount(rootContainer: HostElement | string): ComponentPublicInstance
   unmount(rootContainer: HostElement | string): void
   provide<T>(key: InjectionKey<T> | string, value: T): this
+
+  // internal. We need to expose these for the server-renderer
+  _component: Component
+  _props: Data | null
+  _container: HostElement | null
+  _context: AppContext
 }
 
 export interface AppConfig {
@@ -79,16 +78,34 @@ export function createAppContext(): AppContext {
   }
 }
 
+export type CreateAppFunction<HostElement> = (
+  rootComponent:
+    | Component
+    // for compatibility with defineComponent() return types
+    | { new (): ComponentPublicInstance<any, any, any, any, any> },
+  rootProps?: Data | null
+) => App<HostElement>
+
 export function createAppAPI<HostNode, HostElement>(
   render: RootRenderFunction<HostNode, HostElement>
-): () => App<HostElement> {
-  return function createApp(): App {
+): CreateAppFunction<HostElement> {
+  return function createApp(rootComponent: Component, rootProps = null) {
+    if (rootProps != null && !isObject(rootProps)) {
+      __DEV__ && warn(`root props passed to app.mount() must be an object.`)
+      rootProps = null
+    }
+
     const context = createAppContext()
     const installedPlugins = new Set()
 
     let isMounted = false
 
     const app: App = {
+      _component: rootComponent,
+      _props: rootProps,
+      _container: null,
+      _context: context,
+
       get config() {
         return context.config
       },
@@ -165,17 +182,8 @@ export function createAppAPI<HostNode, HostElement>(
         return app
       },
 
-      mount(
-        rootComponent: Component,
-        rootContainer: HostElement,
-        rootProps?: Data | null
-      ): any {
+      mount(rootContainer: HostElement): any {
         if (!isMounted) {
-          if (rootProps != null && !isObject(rootProps)) {
-            __DEV__ &&
-              warn(`root props passed to app.mount() must be an object.`)
-            rootProps = null
-          }
           const vnode = createVNode(rootComponent, rootProps)
           // store app context on the root VNode.
           // this will be set on the root instance on initial mount.
@@ -190,6 +198,7 @@ export function createAppAPI<HostNode, HostElement>(
 
           render(vnode, rootContainer)
           isMounted = true
+          app._container = rootContainer
           return vnode.component!.proxy
         } else if (__DEV__) {
           warn(
@@ -198,8 +207,12 @@ export function createAppAPI<HostNode, HostElement>(
         }
       },
 
-      unmount(rootContainer: HostElement) {
-        render(null, rootContainer)
+      unmount() {
+        if (isMounted) {
+          render(null, app._container!)
+        } else if (__DEV__) {
+          warn(`Cannot unmount an app that is not mounted.`)
+        }
       },
 
       provide(key, value) {

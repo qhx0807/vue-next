@@ -4,7 +4,9 @@ import {
   isString,
   isObject,
   EMPTY_ARR,
-  extend
+  extend,
+  normalizeClass,
+  normalizeStyle
 } from '@vue/shared'
 import {
   ComponentInternalInstance,
@@ -69,19 +71,19 @@ type VNodeChildAtom<HostNode, HostElement> =
   | null
   | void
 
-export interface VNodeChildren<HostNode = any, HostElement = any>
+export interface VNodeArrayChildren<HostNode = any, HostElement = any>
   extends Array<
-      | VNodeChildren<HostNode, HostElement>
+      | VNodeArrayChildren<HostNode, HostElement>
       | VNodeChildAtom<HostNode, HostElement>
     > {}
 
 export type VNodeChild<HostNode = any, HostElement = any> =
   | VNodeChildAtom<HostNode, HostElement>
-  | VNodeChildren<HostNode, HostElement>
+  | VNodeArrayChildren<HostNode, HostElement>
 
-export type NormalizedChildren<HostNode = any, HostElement = any> =
+export type VNodeNormalizedChildren<HostNode = any, HostElement = any> =
   | string
-  | VNodeChildren<HostNode, HostElement>
+  | VNodeArrayChildren<HostNode, HostElement>
   | RawSlots
   | null
 
@@ -92,7 +94,7 @@ export interface VNode<HostNode = any, HostElement = any> {
   key: string | number | null
   ref: string | Ref | ((ref: object | null) => void) | null
   scopeId: string | null // SFC only
-  children: NormalizedChildren<HostNode, HostElement>
+  children: VNodeNormalizedChildren<HostNode, HostElement>
   component: ComponentInternalInstance | null
   suspense: SuspenseBoundary<HostNode, HostElement> | null
   dirs: DirectiveBinding[] | null
@@ -221,7 +223,7 @@ export function createVNode(
     if (klass != null && !isString(klass)) {
       props.class = normalizeClass(klass)
     }
-    if (style != null) {
+    if (isObject(style)) {
       // reactive state objects need to be cloned since they are likely to be
       // mutated
       if (isReactive(style) && !isArray(style)) {
@@ -374,45 +376,8 @@ export function normalizeChildren(vnode: VNode, children: unknown) {
     children = String(children)
     type = ShapeFlags.TEXT_CHILDREN
   }
-  vnode.children = children as NormalizedChildren
+  vnode.children = children as VNodeNormalizedChildren
   vnode.shapeFlag |= type
-}
-
-function normalizeStyle(
-  value: unknown
-): Record<string, string | number> | void {
-  if (isArray(value)) {
-    const res: Record<string, string | number> = {}
-    for (let i = 0; i < value.length; i++) {
-      const normalized = normalizeStyle(value[i])
-      if (normalized) {
-        for (const key in normalized) {
-          res[key] = normalized[key]
-        }
-      }
-    }
-    return res
-  } else if (isObject(value)) {
-    return value
-  }
-}
-
-export function normalizeClass(value: unknown): string {
-  let res = ''
-  if (isString(value)) {
-    res = value
-  } else if (isArray(value)) {
-    for (let i = 0; i < value.length; i++) {
-      res += normalizeClass(value[i]) + ' '
-    }
-  } else if (isObject(value)) {
-    for (const name in value) {
-      if (value[name]) {
-        res += name + ' '
-      }
-    }
-  }
-  return res.trim()
 }
 
 const handlersRE = /^on|^vnode/

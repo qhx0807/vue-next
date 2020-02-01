@@ -63,6 +63,13 @@ export interface ComponentOptionsBase<
   // Luckily `render()` doesn't need any arguments nor does it care about return
   // type.
   render?: Function
+  // SSR only. This is produced by compiler-ssr and attached in compiler-sfc
+  // not user facing, so the typing is lax and for test only.
+  ssrRender?: (
+    ctx: any,
+    push: (item: any) => void,
+    parentInstance: ComponentInternalInstance
+  ) => void
   components?: Record<
     string,
     Component | { new (): ComponentPublicInstance<any, any, any, any, any> }
@@ -214,10 +221,6 @@ export function applyOptions(
   options: ComponentOptions,
   asMixin: boolean = false
 ) {
-  const renderContext =
-    instance.renderContext === EMPTY_OBJ
-      ? (instance.renderContext = reactive({}))
-      : instance.renderContext
   const ctx = instance.proxy!
   const {
     // composition
@@ -247,6 +250,11 @@ export function applyOptions(
     renderTriggered,
     errorCaptured
   } = options
+
+  const renderContext =
+    instance.renderContext === EMPTY_OBJ
+      ? (instance.renderContext = {})
+      : instance.renderContext
 
   const globalMixins = instance.appContext.mixins
   // call it only during dev
@@ -289,6 +297,7 @@ export function applyOptions(
       extend(instance.data, data)
     }
   }
+
   if (computedOptions) {
     for (const key in computedOptions) {
       const opt = (computedOptions as ComputedOptions)[key]
@@ -333,11 +342,13 @@ export function applyOptions(
       }
     }
   }
+
   if (watchOptions) {
     for (const key in watchOptions) {
       createWatcher(watchOptions[key], renderContext, ctx, key)
     }
   }
+
   if (provideOptions) {
     const provides = isFunction(provideOptions)
       ? provideOptions.call(ctx)
@@ -346,6 +357,7 @@ export function applyOptions(
       provide(key, provides[key])
     }
   }
+
   if (injectOptions) {
     if (isArray(injectOptions)) {
       for (let i = 0; i < injectOptions.length; i++) {
