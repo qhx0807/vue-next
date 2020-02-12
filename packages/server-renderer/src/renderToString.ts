@@ -4,7 +4,6 @@ import {
   ComponentInternalInstance,
   VNode,
   VNodeArrayChildren,
-  VNodeNormalizedChildren,
   createVNode,
   Text,
   Comment,
@@ -12,21 +11,28 @@ import {
   Portal,
   ShapeFlags,
   ssrUtils,
-  Slot
+  Slots,
+  warn
 } from 'vue'
 import {
   isString,
   isPromise,
   isArray,
   isFunction,
-  isVoidTag
+  isVoidTag,
+  escapeHtml,
+  NO,
+  generateCodeFrame
 } from '@vue/shared'
-import { renderProps } from './renderProps'
-import { escapeHtml } from './ssrUtils'
+import { compile } from '@vue/compiler-ssr'
+import { ssrRenderAttrs } from './helpers/ssrRenderAttrs'
+import { SSRSlots } from './helpers/ssrRenderSlot'
+import { CompilerError } from '@vue/compiler-dom'
 
 const {
   isVNode,
   createComponentInstance,
+  setCurrentRenderingInstance,
   setupComponent,
   renderComponentRoot,
   normalizeVNode
@@ -41,8 +47,8 @@ const {
 type SSRBuffer = SSRBufferItem[]
 type SSRBufferItem = string | ResolvedSSRBuffer | Promise<ResolvedSSRBuffer>
 type ResolvedSSRBuffer = (string | ResolvedSSRBuffer)[]
-type PushFn = (item: SSRBufferItem) => void
-type Props = Record<string, unknown>
+export type PushFn = (item: SSRBufferItem) => void
+export type Props = Record<string, unknown>
 
 function createBuffer() {
   let appendable = false
@@ -99,7 +105,7 @@ export async function renderToString(input: App | VNode): Promise<string> {
 export function renderComponent(
   comp: Component,
   props: Props | null = null,
-  children: VNodeNormalizedChildren | null = null,
+  children: Slots | SSRSlots | null = null,
   parentComponent: ComponentInternalInstance | null = null
 ): ResolvedSSRBuffer | Promise<ResolvedSSRBuffer> {
   return renderComponentVNode(
@@ -125,6 +131,44 @@ function renderComponentVNode(
   }
 }
 
+type SSRRenderFunction = (
+  ctx: any,
+  push: (item: any) => void,
+  parentInstance: ComponentInternalInstance
+) => void
+const compileCache: Record<string, SSRRenderFunction> = Object.create(null)
+
+function ssrCompile(
+  template: string,
+  instance: ComponentInternalInstance
+): SSRRenderFunction {
+  const cached = compileCache[template]
+  if (cached) {
+    return cached
+  }
+
+  const { code } = compile(template, {
+    isCustomElement: instance.appContext.config.isCustomElement || NO,
+    isNativeTag: instance.appContext.config.isNativeTag || NO,
+    onError(err: CompilerError) {
+      if (__DEV__) {
+        const message = `Template compilation error: ${err.message}`
+        const codeFrame =
+          err.loc &&
+          generateCodeFrame(
+            template as string,
+            err.loc.start.offset,
+            err.loc.end.offset
+          )
+        warn(codeFrame ? `${message}\n${codeFrame}` : message)
+      } else {
+        throw err
+      }
+    }
+  })
+  return (compileCache[template] = Function(code)())
+}
+
 function renderComponentSubTree(
   instance: ComponentInternalInstance
 ): ResolvedSSRBuffer | Promise<ResolvedSSRBuffer> {
@@ -133,17 +177,23 @@ function renderComponentSubTree(
   if (isFunction(comp)) {
     renderVNode(push, renderComponentRoot(instance), instance)
   } else {
+    if (!comp.ssrRender && !comp.render && isString(comp.template)) {
+      comp.ssrRender = ssrCompile(comp.template, instance)
+    }
+
     if (comp.ssrRender) {
       // optimized
+      // set current rendering instance for asset resolution
+      setCurrentRenderingInstance(instance)
       comp.ssrRender(instance.proxy, push, instance)
+      setCurrentRenderingInstance(null)
     } else if (comp.render) {
       renderVNode(push, renderComponentRoot(instance), instance)
     } else {
-      // TODO on the fly template compilation support
       throw new Error(
         `Component ${
           comp.name ? `${comp.name} ` : ``
-        } is missing render function.`
+        } is missing template or render function.`
       )
     }
   }
@@ -191,7 +241,7 @@ function renderVNode(
   }
 }
 
-function renderVNodeChildren(
+export function renderVNodeChildren(
   push: PushFn,
   children: VNodeArrayChildren,
   parentComponent: ComponentInternalInstance | null = null
@@ -213,7 +263,7 @@ function renderElement(
   // TODO directives
 
   if (props !== null) {
-    openTag += renderProps(props, tag)
+    openTag += ssrRenderAttrs(props, tag)
   }
 
   if (scopeId !== null) {
@@ -254,28 +304,4 @@ function renderElement(
     }
     push(`</${tag}>`)
   }
-}
-
-type OptimizedSlotFn = (
-  props: Props,
-  push: PushFn,
-  parentComponent: ComponentInternalInstance | null
-) => void
-
-export function renderSlot(
-  slotFn: Slot | OptimizedSlotFn,
-  slotProps: Props,
-  push: PushFn,
-  parentComponent: ComponentInternalInstance | null = null
-) {
-  // template-compiled slots are always rendered as fragments
-  push(`<!---->`)
-  if (slotFn.length > 1) {
-    // only ssr-optimized slot fns accept more than 1 arguments
-    slotFn(slotProps, push, parentComponent)
-  } else {
-    // normal slot
-    renderVNodeChildren(push, (slotFn as Slot)(slotProps), parentComponent)
-  }
-  push(`<!---->`)
 }

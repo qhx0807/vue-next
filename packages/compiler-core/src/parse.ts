@@ -1,5 +1,5 @@
 import { ParserOptions } from './options'
-import { NO, isArray } from '@vue/shared'
+import { NO, isArray, makeMap } from '@vue/shared'
 import { ErrorCodes, createCompilerError, defaultOnError } from './errors'
 import {
   assert,
@@ -21,7 +21,8 @@ import {
   SourceLocation,
   TextNode,
   TemplateChildNode,
-  InterpolationNode
+  InterpolationNode,
+  createRoot
 } from './ast'
 import { extend } from '@vue/shared'
 
@@ -72,19 +73,10 @@ export function baseParse(
 ): RootNode {
   const context = createParserContext(content, options)
   const start = getCursor(context)
-
-  return {
-    type: NodeTypes.ROOT,
-    children: parseChildren(context, TextModes.DATA, []),
-    helpers: [],
-    components: [],
-    directives: [],
-    hoists: [],
-    imports: [],
-    cached: 0,
-    codegenNode: undefined,
-    loc: getSelection(context, start)
-  }
+  return createRoot(
+    parseChildren(context, TextModes.DATA, []),
+    getSelection(context, start)
+  )
 }
 
 function createParserContext(
@@ -397,6 +389,10 @@ const enum TagType {
   End
 }
 
+const isSpecialTemplateDirective = /*#__PURE__*/ makeMap(
+  `if,else,else-if,for,slot`
+)
+
 /**
  * Parse a tag (E.g. `<div id=a>`) with that type (start tag or end tag).
  */
@@ -460,14 +456,22 @@ function parseTag(
     } else if (
       isCoreComponent(tag) ||
       (options.isBuiltInComponent && options.isBuiltInComponent(tag)) ||
-      /^[A-Z]/.test(tag)
+      /^[A-Z]/.test(tag) ||
+      tag === 'component'
     ) {
       tagType = ElementTypes.COMPONENT
     }
 
     if (tag === 'slot') {
       tagType = ElementTypes.SLOT
-    } else if (tag === 'template') {
+    } else if (
+      tag === 'template' &&
+      props.some(p => {
+        return (
+          p.type === NodeTypes.DIRECTIVE && isSpecialTemplateDirective(p.name)
+        )
+      })
+    ) {
       tagType = ElementTypes.TEMPLATE
     }
   }

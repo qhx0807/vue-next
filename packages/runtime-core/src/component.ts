@@ -34,7 +34,7 @@ import {
   currentRenderingInstance,
   markAttrsAccessed
 } from './componentRenderUtils'
-import { ShapeFlags } from '.'
+import { ShapeFlags } from './shapeFlags'
 
 export type Data = { [key: string]: unknown }
 
@@ -113,6 +113,7 @@ export interface ComponentInternalInstance {
   data: Data
   props: Data
   attrs: Data
+  vnodeHooks: Data
   slots: Slots
   proxy: ComponentPublicInstance | null
   // alternative proxy used only for runtime-compiled render functions using
@@ -186,6 +187,7 @@ export function createComponentInstance(
     data: EMPTY_OBJ,
     props: EMPTY_OBJ,
     attrs: EMPTY_OBJ,
+    vnodeHooks: EMPTY_OBJ,
     slots: EMPTY_OBJ,
     refs: EMPTY_OBJ,
 
@@ -493,7 +495,9 @@ function createSetupContext(instance: ComponentInternalInstance): SetupContext {
     // need to expose them through a proxy
     attrs: new Proxy(instance, SetupProxyHandlers.attrs),
     slots: new Proxy(instance, SetupProxyHandlers.slots),
-    emit: instance.emit
+    get emit() {
+      return instance.emit
+    }
   }
   return __DEV__ ? Object.freeze(context) : context
 }

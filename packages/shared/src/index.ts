@@ -8,6 +8,8 @@ export * from './mockWarn'
 export * from './normalizeProp'
 export * from './domTagConfig'
 export * from './domAttrConfig'
+export * from './escapeHtml'
+export * from './looseEqual'
 
 export const EMPTY_OBJ: { readonly [key: string]: any } = __DEV__
   ? Object.freeze({})

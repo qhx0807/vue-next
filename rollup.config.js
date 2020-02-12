@@ -177,7 +177,15 @@ function createReplacePlugin(
     // support options?
     // the lean build drops options related code with buildOptions.lean: true
     __FEATURE_OPTIONS__: !packageOptions.lean && !process.env.LEAN,
-    __FEATURE_SUSPENSE__: true
+    __FEATURE_SUSPENSE__: true,
+    ...(isProduction && isBrowserBuild
+      ? {
+          'context.onError(': `/*#__PURE__*/ context.onError(`,
+          'emitError(': `/*#__PURE__*/ emitError(`,
+          'createCompilerError(': `/*#__PURE__*/ createCompilerError(`,
+          'createDOMCompilerError(': `/*#__PURE__*/ createDOMCompilerError(`
+        }
+      : {})
   }
   // allow inline overrides like
   //__RUNTIME_COMPILE__=true yarn build runtime-core
@@ -206,7 +214,11 @@ function createMinifiedConfig(format) {
     },
     [
       terser({
-        module: /^esm/.test(format)
+        module: /^esm/.test(format),
+        compress: {
+          ecma: 2015,
+          pure_getters: true
+        }
       })
     ]
   )

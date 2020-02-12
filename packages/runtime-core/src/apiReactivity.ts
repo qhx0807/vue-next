@@ -6,10 +6,10 @@ export {
   isReactive,
   readonly,
   isReadonly,
+  shallowReactive,
   toRaw,
   markReadonly,
   markNonReactive,
-  effect,
   // types
   ReactiveEffect,
   ReactiveEffectOptions,
