@@ -48,7 +48,8 @@ import {
   WITH_SCOPE_ID,
   WITH_DIRECTIVES,
   CREATE_BLOCK,
-  OPEN_BLOCK
+  OPEN_BLOCK,
+  CREATE_STATIC
 } from './runtimeHelpers'
 import { ImportItem } from './transform'
 
@@ -209,7 +210,7 @@ export function generate(
   indent()
 
   if (useWithBlock) {
-    push(`with (this) {`)
+    push(`with (_ctx) {`)
     indent()
     // function mode const declarations should be inside with block
     // also they should be renamed to avoid collision with user properties
@@ -309,7 +310,12 @@ function genFunctionPreamble(ast: RootNode, context: CodegenContext) {
       // has check cost, but hoists are lifted out of the function - we need
       // to provide the helper here.
       if (ast.hoists.length) {
-        const staticHelpers = [CREATE_VNODE, CREATE_COMMENT, CREATE_TEXT]
+        const staticHelpers = [
+          CREATE_VNODE,
+          CREATE_COMMENT,
+          CREATE_TEXT,
+          CREATE_STATIC
+        ]
           .filter(helper => ast.helpers.includes(helper))
           .map(aliasHelper)
           .join(', ')
@@ -591,6 +597,9 @@ function genNode(node: CodegenNode | symbol | string, context: CodegenContext) {
       break
 
     /* istanbul ignore next */
+    case NodeTypes.IF_BRANCH:
+      // noop
+      break
     default:
       if (__DEV__) {
         assert(false, `unhandled codegen node type: ${(node as any).type}`)

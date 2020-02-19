@@ -6,7 +6,9 @@ import {
   EMPTY_ARR,
   extend,
   normalizeClass,
-  normalizeStyle
+  normalizeStyle,
+  PatchFlags,
+  ShapeFlags
 } from '@vue/shared'
 import {
   ComponentInternalInstance,
@@ -15,15 +17,18 @@ import {
   Component
 } from './component'
 import { RawSlots } from './componentSlots'
-import { ShapeFlags } from './shapeFlags'
 import { isReactive, Ref } from '@vue/reactivity'
 import { AppContext } from './apiCreateApp'
-import { SuspenseBoundary } from './components/Suspense'
+import {
+  SuspenseImpl,
+  isSuspense,
+  SuspenseBoundary
+} from './components/Suspense'
 import { DirectiveBinding } from './directives'
-import { SuspenseImpl } from './components/Suspense'
 import { TransitionHooks } from './components/BaseTransition'
 import { warn } from './warning'
 import { currentScopeId } from './helpers/scopeId'
+import { PortalImpl, isPortal } from './components/Portal'
 
 export const Fragment = (Symbol(__DEV__ ? 'Fragment' : undefined) as any) as {
   __isFragment: true
@@ -31,22 +36,18 @@ export const Fragment = (Symbol(__DEV__ ? 'Fragment' : undefined) as any) as {
     $props: VNodeProps
   }
 }
-export const Portal = (Symbol(__DEV__ ? 'Portal' : undefined) as any) as {
-  __isPortal: true
-  new (): {
-    $props: VNodeProps & { target: string | object }
-  }
-}
 export const Text = Symbol(__DEV__ ? 'Text' : undefined)
 export const Comment = Symbol(__DEV__ ? 'Comment' : undefined)
+export const Static = Symbol(__DEV__ ? 'Static' : undefined)
 
 export type VNodeTypes =
   | string
   | Component
-  | typeof Fragment
-  | typeof Portal
   | typeof Text
+  | typeof Static
   | typeof Comment
+  | typeof Fragment
+  | typeof PortalImpl
   | typeof SuspenseImpl
 
 export interface VNodeProps {
@@ -236,13 +237,15 @@ export function createVNode(
   // encode the vnode type information into a bitmap
   const shapeFlag = isString(type)
     ? ShapeFlags.ELEMENT
-    : __FEATURE_SUSPENSE__ && (type as any).__isSuspense === true
+    : __FEATURE_SUSPENSE__ && isSuspense(type)
       ? ShapeFlags.SUSPENSE
-      : isObject(type)
-        ? ShapeFlags.STATEFUL_COMPONENT
-        : isFunction(type)
-          ? ShapeFlags.FUNCTIONAL_COMPONENT
-          : 0
+      : isPortal(type)
+        ? ShapeFlags.PORTAL
+        : isObject(type)
+          ? ShapeFlags.STATEFUL_COMPONENT
+          : isFunction(type)
+            ? ShapeFlags.FUNCTIONAL_COMPONENT
+            : 0
 
   const vnode: VNode = {
     _isVNode: true,
@@ -275,6 +278,9 @@ export function createVNode(
   if (
     shouldTrack > 0 &&
     currentBlock !== null &&
+    // the EVENTS flag is only for hydration and if it is the only flag, the
+    // vnode should not be considered dynamic due to handler caching.
+    patchFlag !== PatchFlags.HYDRATE_EVENTS &&
     (patchFlag > 0 ||
       shapeFlag & ShapeFlags.SUSPENSE ||
       shapeFlag & ShapeFlags.STATEFUL_COMPONENT ||
@@ -326,6 +332,10 @@ export function cloneVNode<T, U>(
 
 export function createTextVNode(text: string = ' ', flag: number = 0): VNode {
   return createVNode(Text, null, text, flag)
+}
+
+export function createStaticVNode(content: string): VNode {
+  return createVNode(Static, null, content)
 }
 
 export function createCommentVNode(

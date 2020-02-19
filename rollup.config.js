@@ -88,10 +88,7 @@ function createConfig(format, output, plugins = []) {
     output.name = packageOptions.name
   }
 
-  const shouldEmitDeclarations =
-    process.env.TYPES != null &&
-    process.env.NODE_ENV === 'production' &&
-    !hasTSChecked
+  const shouldEmitDeclarations = process.env.TYPES != null && !hasTSChecked
 
   const tsPlugin = ts({
     check: process.env.NODE_ENV === 'production' && !hasTSChecked,
@@ -136,6 +133,7 @@ function createConfig(format, output, plugins = []) {
         (isGlobalBuild || isRawESMBuild || isBundlerESMBuild) &&
           !packageOptions.enableNonBrowserBranches,
         isRuntimeCompileBuild,
+        isGlobalBuild,
         isNodeBuild
       ),
       ...plugins
@@ -154,6 +152,7 @@ function createReplacePlugin(
   isBundlerESMBuild,
   isBrowserBuild,
   isRuntimeCompileBuild,
+  isGlobalBuild,
   isNodeBuild
 ) {
   const replacements = {
@@ -172,6 +171,7 @@ function createReplacePlugin(
     __BUNDLER__: isBundlerESMBuild,
     // support compile in browser?
     __RUNTIME_COMPILE__: isRuntimeCompileBuild,
+    __GLOBAL__: isGlobalBuild,
     // is targeting Node (SSR)?
     __NODE_JS__: isNodeBuild,
     // support options?

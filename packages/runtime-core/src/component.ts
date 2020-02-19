@@ -1,5 +1,10 @@
 import { VNode, VNodeChild, isVNode } from './vnode'
-import { ReactiveEffect, shallowReadonly } from '@vue/reactivity'
+import {
+  ReactiveEffect,
+  shallowReadonly,
+  pauseTracking,
+  resetTracking
+} from '@vue/reactivity'
 import {
   PublicInstanceProxyHandlers,
   ComponentPublicInstance,
@@ -26,7 +31,8 @@ import {
   makeMap,
   isPromise,
   isArray,
-  hyphenate
+  hyphenate,
+  ShapeFlags
 } from '@vue/shared'
 import { SuspenseBoundary } from './components/Suspense'
 import { CompilerOptions } from '@vue/compiler-core'
@@ -34,7 +40,6 @@ import {
   currentRenderingInstance,
   markAttrsAccessed
 } from './componentRenderUtils'
-import { ShapeFlags } from './shapeFlags'
 
 export type Data = { [key: string]: unknown }
 
@@ -53,6 +58,13 @@ export interface FunctionalComponent<P = {}> extends SFCInternalOptions {
 }
 
 export type Component = ComponentOptions | FunctionalComponent
+
+// A type used in public APIs where a component type is expected.
+// The constructor type is an artificial type returned by defineComponent().
+export type PublicAPIComponent =
+  | Component
+  | { new (): ComponentPublicInstance<any, any, any, any, any> }
+
 export { ComponentOptions }
 
 type LifecycleHook = Function[] | null
@@ -102,7 +114,7 @@ export interface ComponentInternalInstance {
   accessCache: Data | null
   // cache for render function values that rely on _ctx but won't need updates
   // after initialized (e.g. inline handlers)
-  renderCache: (Function | VNode)[] | null
+  renderCache: (Function | VNode)[]
 
   // assets for fast resolution
   components: Record<string, Component>
@@ -180,7 +192,7 @@ export function createComponentInstance(
     effects: null,
     provides: parent ? parent.provides : Object.create(appContext.provides),
     accessCache: null!,
-    renderCache: null,
+    renderCache: [],
 
     // setup context properties
     renderContext: EMPTY_OBJ,
@@ -334,12 +346,14 @@ function setupStatefulComponent(
 
     currentInstance = instance
     currentSuspense = parentSuspense
+    pauseTracking()
     const setupResult = callWithErrorHandling(
       setup,
       instance,
       ErrorCodes.SETUP_FUNCTION,
       [propsProxy, setupContext]
     )
+    resetTracking()
     currentInstance = null
     currentSuspense = null
 
@@ -500,4 +514,12 @@ function createSetupContext(instance: ComponentInternalInstance): SetupContext {
     }
   }
   return __DEV__ ? Object.freeze(context) : context
+}
+
+// record effects created during a component's setup() so that they can be
+// stopped when the component unmounts
+export function recordInstanceBoundEffect(effect: ReactiveEffect) {
+  if (currentInstance) {
+    ;(currentInstance.effects || (currentInstance.effects = [])).push(effect)
+  }
 }

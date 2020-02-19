@@ -52,7 +52,12 @@ function walk(
     ) {
       if (!doNotHoistNode && isStaticNode(child, resultCache)) {
         // whole tree is static
-        child.codegenNode = context.hoist(child.codegenNode!)
+        ;(child.codegenNode as VNodeCall).patchFlag =
+          PatchFlags.HOISTED + (__DEV__ ? ` /* HOISTED */` : ``)
+        const hoisted = context.transformHoist
+          ? context.transformHoist(child, context)
+          : child.codegenNode!
+        child.codegenNode = context.hoist(hoisted)
         continue
       } else {
         // node may contain dynamic children, but its props may be eligible for
@@ -138,6 +143,7 @@ export function isStaticNode(
       return true
     case NodeTypes.IF:
     case NodeTypes.FOR:
+    case NodeTypes.IF_BRANCH:
       return false
     case NodeTypes.INTERPOLATION:
     case NodeTypes.TEXT_CALL:
@@ -171,7 +177,17 @@ function hasCachedProps(node: PlainElementNode): boolean {
   if (props && props.type === NodeTypes.JS_OBJECT_EXPRESSION) {
     const { properties } = props
     for (let i = 0; i < properties.length; i++) {
-      if (properties[i].value.type === NodeTypes.JS_CACHE_EXPRESSION) {
+      const val = properties[i].value
+      if (val.type === NodeTypes.JS_CACHE_EXPRESSION) {
+        return true
+      }
+      // merged event handlers
+      if (
+        val.type === NodeTypes.JS_ARRAY_EXPRESSION &&
+        val.elements.some(
+          e => !isString(e) && e.type === NodeTypes.JS_CACHE_EXPRESSION
+        )
+      ) {
         return true
       }
     }

@@ -321,13 +321,13 @@ describe('compiler: element transform', () => {
               fallback: {
                 type: NodeTypes.JS_FUNCTION_EXPRESSION
               },
-              _compiled: `[true]`
+              _: `[1]`
             })
           : createObjectMatcher({
               default: {
                 type: NodeTypes.JS_FUNCTION_EXPRESSION
               },
-              _compiled: `[true]`
+              _: `[1]`
             })
       })
     }
@@ -381,7 +381,7 @@ describe('compiler: element transform', () => {
           default: {
             type: NodeTypes.JS_FUNCTION_EXPRESSION
           },
-          _compiled: `[true]`
+          _: `[1]`
         })
       })
     }
@@ -769,6 +769,29 @@ describe('compiler: element transform', () => {
     test('NEED_PATCH (custom directives)', () => {
       const { node } = parseWithBind(`<div v-foo />`)
       expect(node.patchFlag).toBe(genFlagText(PatchFlags.NEED_PATCH))
+    })
+
+    test('HYDRATE_EVENTS', () => {
+      // ignore click events (has dedicated fast path)
+      const { node } = parseWithElementTransform(`<div @click="foo" />`, {
+        directiveTransforms: {
+          on: transformOn
+        }
+      })
+      // should only have props flag
+      expect(node.patchFlag).toBe(genFlagText(PatchFlags.PROPS))
+
+      const { node: node2 } = parseWithElementTransform(
+        `<div @keyup="foo" />`,
+        {
+          directiveTransforms: {
+            on: transformOn
+          }
+        }
+      )
+      expect(node2.patchFlag).toBe(
+        genFlagText([PatchFlags.PROPS, PatchFlags.HYDRATE_EVENTS])
+      )
     })
   })
 
