@@ -8,7 +8,14 @@ import {
   ComputedOptions,
   MethodOptions
 } from './apiOptions'
-import { UnwrapRef, ReactiveEffect, isRef, isReactive } from '@vue/reactivity'
+import {
+  ReactiveEffect,
+  isRef,
+  isReactive,
+  Ref,
+  ComputedRef,
+  unref
+} from '@vue/reactivity'
 import { warn } from './warning'
 import { Slots } from './componentSlots'
 import {
@@ -19,9 +26,9 @@ import {
 // public properties exposed on the proxy, which is used as the render context
 // in templates (as `this` in the render option)
 export type ComponentPublicInstance<
-  P = {},
-  B = {},
-  D = {},
+  P = {}, // props type extracted from props option
+  B = {}, // raw bindings returned from setup()
+  D = {}, // return from data()
   C extends ComputedOptions = {},
   M extends MethodOptions = {},
   PublicProps = P
@@ -40,10 +47,16 @@ export type ComponentPublicInstance<
   $nextTick: typeof nextTick
   $watch: typeof instanceWatch
 } & P &
-  UnwrapRef<B> &
+  UnwrapSetupBindings<B> &
   D &
   ExtractComputedReturns<C> &
   M
+
+type UnwrapSetupBindings<B> = { [K in keyof B]: UnwrapBinding<B[K]> }
+
+type UnwrapBinding<B> = B extends ComputedRef<any>
+  ? B extends ComputedRef<infer V> ? V : B
+  : B extends Ref<infer V> ? V : B
 
 const publicPropertiesMap: Record<
   string,
@@ -71,8 +84,6 @@ const enum AccessTypes {
   PROPS,
   OTHER
 }
-
-const unwrapRef = (val: unknown) => (isRef(val) ? val.value : val)
 
 export const PublicInstanceProxyHandlers: ProxyHandler<any> = {
   get(target: ComponentInternalInstance, key: string) {
@@ -103,7 +114,7 @@ export const PublicInstanceProxyHandlers: ProxyHandler<any> = {
           case AccessTypes.DATA:
             return data[key]
           case AccessTypes.CONTEXT:
-            return unwrapRef(renderContext[key])
+            return unref(renderContext[key])
           case AccessTypes.PROPS:
             return propsProxy![key]
           // default: just fallthrough
@@ -113,7 +124,7 @@ export const PublicInstanceProxyHandlers: ProxyHandler<any> = {
         return data[key]
       } else if (hasOwn(renderContext, key)) {
         accessCache![key] = AccessTypes.CONTEXT
-        return unwrapRef(renderContext[key])
+        return unref(renderContext[key])
       } else if (type.props != null) {
         // only cache other properties when instance has declared (this stable)
         // props
