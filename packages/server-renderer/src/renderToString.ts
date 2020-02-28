@@ -45,9 +45,12 @@ const {
 // - A resolved buffer (recursive arrays of strings that can be unrolled
 //   synchronously)
 // - An async buffer (a Promise that resolves to a resolved buffer)
-type SSRBuffer = SSRBufferItem[]
-type SSRBufferItem = string | ResolvedSSRBuffer | Promise<ResolvedSSRBuffer>
-type ResolvedSSRBuffer = (string | ResolvedSSRBuffer)[]
+export type SSRBuffer = SSRBufferItem[]
+export type SSRBufferItem =
+  | string
+  | ResolvedSSRBuffer
+  | Promise<ResolvedSSRBuffer>
+export type ResolvedSSRBuffer = (string | ResolvedSSRBuffer)[]
 
 export type PushFn = (item: SSRBufferItem) => void
 
@@ -62,7 +65,7 @@ export type SSRContext = {
   >
 }
 
-function createBuffer() {
+export function createBuffer() {
   let appendable = false
   let hasAsync = false
   const buffer: SSRBuffer = []
@@ -235,9 +238,7 @@ function renderVNode(
       push(children ? `<!--${children}-->` : `<!---->`)
       break
     case Fragment:
-      push(`<!---->`)
       renderVNodeChildren(push, children as VNodeArrayChildren, parentComponent)
-      push(`<!---->`)
       break
     default:
       if (shapeFlag & ShapeFlags.ELEMENT) {
