@@ -1,6 +1,6 @@
 {
   "name": "vue",
-  "version": "3.0.0-alpha.7",
+  "version": "3.0.0-alpha.9",
   "description": "vue",
   "main": "index.js",
   "module": "dist/vue.runtime.esm-bundler.js",
@@ -13,7 +13,6 @@
   ],
   "buildOptions": {
     "name": "Vue",
-    "isRuntimeCompileBuild": true,
     "formats": [
       "esm-bundler",
       "esm-bundler-runtime",
@@ -24,7 +23,7 @@
   },
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/vuejs/vue.git"
+    "url": "git+https://github.com/vuejs/vue-next.git"
   },
   "keywords": [
     "vue"
@@ -32,12 +31,13 @@
   "author": "Evan You",
   "license": "MIT",
   "bugs": {
-    "url": "https://github.com/vuejs/vue/issues"
+    "url": "https://github.com/vuejs/vue-next/issues"
   },
-  "homepage": "https://github.com/vuejs/vue/tree/dev/packages/vue#readme",
+  "homepage": "https://github.com/vuejs/vue-next/tree/master/packages/vue#readme",
   "dependencies": {
-    "@vue/compiler-dom": "3.0.0-alpha.7",
-    "@vue/runtime-dom": "3.0.0-alpha.7"
+    "@vue/shared": "3.0.0-alpha.9",
+    "@vue/compiler-dom": "3.0.0-alpha.9",
+    "@vue/runtime-dom": "3.0.0-alpha.9"
   },
   "devDependencies": {
     "lodash": "^4.17.15",
