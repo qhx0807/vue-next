@@ -31,6 +31,7 @@ import { warn } from './warning'
 import { currentScopeId } from './helpers/scopeId'
 import { PortalImpl, isPortal } from './components/Portal'
 import { currentRenderingInstance } from './componentRenderUtils'
+import { RendererNode, RendererElement } from './renderer'
 
 export const Fragment = (Symbol(__DEV__ ? 'Fragment' : undefined) as any) as {
   __isFragment: true
@@ -81,40 +82,31 @@ export interface VNodeProps {
   onVnodeUnmounted?: VNodeMountHook | VNodeMountHook[]
 }
 
-type VNodeChildAtom<HostNode, HostElement> =
-  | VNode<HostNode, HostElement>
+type VNodeChildAtom = VNode | string | number | boolean | null | void
+
+export interface VNodeArrayChildren<
+  HostNode = RendererNode,
+  HostElement = RendererElement
+> extends Array<VNodeArrayChildren | VNodeChildAtom> {}
+
+export type VNodeChild = VNodeChildAtom | VNodeArrayChildren
+
+export type VNodeNormalizedChildren =
   | string
-  | number
-  | boolean
-  | null
-  | void
-
-export interface VNodeArrayChildren<HostNode = any, HostElement = any>
-  extends Array<
-      | VNodeArrayChildren<HostNode, HostElement>
-      | VNodeChildAtom<HostNode, HostElement>
-    > {}
-
-export type VNodeChild<HostNode = any, HostElement = any> =
-  | VNodeChildAtom<HostNode, HostElement>
-  | VNodeArrayChildren<HostNode, HostElement>
-
-export type VNodeNormalizedChildren<HostNode = any, HostElement = any> =
-  | string
-  | VNodeArrayChildren<HostNode, HostElement>
+  | VNodeArrayChildren
   | RawSlots
   | null
 
-export interface VNode<HostNode = any, HostElement = any> {
+export interface VNode<HostNode = RendererNode, HostElement = RendererElement> {
   _isVNode: true
   type: VNodeTypes
   props: VNodeProps | null
   key: string | number | null
   ref: VNodeNormalizedRef | null
   scopeId: string | null // SFC only
-  children: VNodeNormalizedChildren<HostNode, HostElement>
+  children: VNodeNormalizedChildren
   component: ComponentInternalInstance | null
-  suspense: SuspenseBoundary<HostNode, HostElement> | null
+  suspense: SuspenseBoundary | null
   dirs: DirectiveBinding[] | null
   transition: TransitionHooks | null
 
@@ -219,7 +211,34 @@ export function isSameVNodeType(n1: VNode, n2: VNode): boolean {
   return n1.type === n2.type && n1.key === n2.key
 }
 
-export function createVNode(
+let vnodeArgsTransformer:
+  | ((
+      args: Parameters<typeof _createVNode>,
+      instance: ComponentInternalInstance | null
+    ) => Parameters<typeof _createVNode>)
+  | undefined
+
+// Internal API for registering an arguments transform for createVNode
+// used for creating stubs in the test-utils
+export function transformVNodeArgs(transformer?: typeof vnodeArgsTransformer) {
+  vnodeArgsTransformer = transformer
+}
+
+const createVNodeWithArgsTransform = (
+  ...args: Parameters<typeof _createVNode>
+): VNode => {
+  return _createVNode(
+    ...(vnodeArgsTransformer
+      ? vnodeArgsTransformer(args, currentRenderingInstance)
+      : args)
+  )
+}
+
+export const createVNode = (__DEV__
+  ? createVNodeWithArgsTransform
+  : _createVNode) as typeof _createVNode
+
+function _createVNode(
   type: VNodeTypes | ClassComponent,
   props: (Data & VNodeProps) | null = null,
   children: unknown = null,
@@ -376,7 +395,7 @@ export function createCommentVNode(
     : createVNode(Comment, null, text)
 }
 
-export function normalizeVNode<T, U>(child: VNodeChild<T, U>): VNode<T, U> {
+export function normalizeVNode(child: VNodeChild): VNode {
   if (child == null || typeof child === 'boolean') {
     // empty placeholder
     return createVNode(Comment)
@@ -400,21 +419,37 @@ export function cloneIfMounted(child: VNode): VNode {
 
 export function normalizeChildren(vnode: VNode, children: unknown) {
   let type = 0
+  const { shapeFlag } = vnode
   if (children == null) {
     children = null
   } else if (isArray(children)) {
     type = ShapeFlags.ARRAY_CHILDREN
   } else if (typeof children === 'object') {
-    type = ShapeFlags.SLOTS_CHILDREN
-    if (!(children as RawSlots)._) {
-      ;(children as RawSlots)._ctx = currentRenderingInstance
+    // Normalize slot to plain children
+    if (
+      (shapeFlag & ShapeFlags.ELEMENT || shapeFlag & ShapeFlags.PORTAL) &&
+      (children as any).default
+    ) {
+      normalizeChildren(vnode, (children as any).default())
+      return
+    } else {
+      type = ShapeFlags.SLOTS_CHILDREN
+      if (!(children as RawSlots)._) {
+        ;(children as RawSlots)._ctx = currentRenderingInstance
+      }
     }
   } else if (isFunction(children)) {
     children = { default: children, _ctx: currentRenderingInstance }
     type = ShapeFlags.SLOTS_CHILDREN
   } else {
     children = String(children)
-    type = ShapeFlags.TEXT_CHILDREN
+    // force portal children to array so it can be moved around
+    if (shapeFlag & ShapeFlags.PORTAL) {
+      type = ShapeFlags.ARRAY_CHILDREN
+      children = [createTextVNode(children as string)]
+    } else {
+      type = ShapeFlags.TEXT_CHILDREN
+    }
   }
   vnode.children = children as VNodeNormalizedChildren
   vnode.shapeFlag |= type

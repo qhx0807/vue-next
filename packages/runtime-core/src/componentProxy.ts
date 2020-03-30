@@ -6,7 +6,8 @@ import {
   ExtractComputedReturns,
   ComponentOptionsBase,
   ComputedOptions,
-  MethodOptions
+  MethodOptions,
+  resolveMergedOptions
 } from './apiOptions'
 import { ReactiveEffect, UnwrapRef } from '@vue/reactivity'
 import { warn } from './warning'
@@ -61,7 +62,7 @@ const publicPropertiesMap: Record<
   $parent: i => i.parent,
   $root: i => i.root,
   $emit: i => i.emit,
-  $options: i => i.type,
+  $options: i => (__FEATURE_OPTIONS__ ? resolveMergedOptions(i) : i.type),
   $forceUpdate: i => () => queueJob(i.update),
   $nextTick: () => nextTick,
   $watch: __FEATURE_OPTIONS__ ? i => instanceWatch.bind(i) : NOOP
@@ -76,7 +77,15 @@ const enum AccessTypes {
 
 export const PublicInstanceProxyHandlers: ProxyHandler<any> = {
   get(target: ComponentInternalInstance, key: string) {
-    const { renderContext, data, propsProxy, accessCache, type, sink } = target
+    const {
+      renderContext,
+      data,
+      propsProxy,
+      accessCache,
+      type,
+      sink,
+      appContext
+    } = target
 
     // data / props / renderContext
     // This getter gets called for every property access on the render context
@@ -117,20 +126,24 @@ export const PublicInstanceProxyHandlers: ProxyHandler<any> = {
 
     // public $xxx properties & user-attached properties (sink)
     const publicGetter = publicPropertiesMap[key]
-    let cssModule
+    let cssModule, globalProperties
     if (publicGetter) {
       if (__DEV__ && key === '$attrs') {
         markAttrsAccessed()
       }
       return publicGetter(target)
+    } else if (hasOwn(sink, key)) {
+      return sink[key]
     } else if (
-      __BUNDLER__ &&
       (cssModule = type.__cssModules) &&
       (cssModule = cssModule[key])
     ) {
       return cssModule
-    } else if (hasOwn(sink, key)) {
-      return sink[key]
+    } else if (
+      ((globalProperties = appContext.config.globalProperties),
+      hasOwn(globalProperties, key))
+    ) {
+      return globalProperties[key]
     } else if (__DEV__ && currentRenderingInstance) {
       warn(
         `Property ${JSON.stringify(key)} was accessed during render ` +
