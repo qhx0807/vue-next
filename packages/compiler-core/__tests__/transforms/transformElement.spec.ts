@@ -11,7 +11,7 @@ import {
   RESOLVE_DIRECTIVE,
   TO_HANDLERS,
   helperNameMap,
-  PORTAL,
+  TELEPORT,
   RESOLVE_DYNAMIC_COMPONENT,
   SUSPENSE,
   KEEP_ALIVE,
@@ -272,16 +272,16 @@ describe('compiler: element transform', () => {
     })
   })
 
-  test('should handle <Portal> with normal children', () => {
+  test('should handle <Teleport> with normal children', () => {
     function assert(tag: string) {
       const { root, node } = parseWithElementTransform(
         `<${tag} target="#foo"><span /></${tag}>`
       )
       expect(root.components.length).toBe(0)
-      expect(root.helpers).toContain(PORTAL)
+      expect(root.helpers).toContain(TELEPORT)
 
       expect(node).toMatchObject({
-        tag: PORTAL,
+        tag: TELEPORT,
         props: createObjectMatcher({
           target: '#foo'
         }),
@@ -298,8 +298,8 @@ describe('compiler: element transform', () => {
       })
     }
 
-    assert(`portal`)
-    assert(`Portal`)
+    assert(`teleport`)
+    assert(`Teleport`)
   })
 
   test('should handle <Suspense>', () => {
@@ -858,6 +858,19 @@ describe('compiler: element transform', () => {
     expect((ast as any).children[0].children[0].codegenNode).toMatchObject({
       type: NodeTypes.VNODE_CALL,
       tag: `"svg"`,
+      isBlock: true
+    })
+  })
+
+  // #938
+  test('element with dynamic keys should be forced into blocks', () => {
+    const ast = parse(`<div><div :key="foo" /></div>`)
+    transform(ast, {
+      nodeTransforms: [transformElement]
+    })
+    expect((ast as any).children[0].children[0].codegenNode).toMatchObject({
+      type: NodeTypes.VNODE_CALL,
+      tag: `"div"`,
       isBlock: true
     })
   })

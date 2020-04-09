@@ -222,7 +222,8 @@ describe('Suspense', () => {
 
   test('content update before suspense resolve', async () => {
     const Async = defineAsyncComponent({
-      setup(props: { msg: string }) {
+      props: { msg: String },
+      setup(props: any) {
         return () => h('div', props.msg)
       }
     })
@@ -569,7 +570,8 @@ describe('Suspense', () => {
     const calls: number[] = []
 
     const AsyncChildWithSuspense = defineAsyncComponent({
-      setup(props: { msg: string }) {
+      props: { msg: String },
+      setup(props: any) {
         onMounted(() => {
           calls.push(0)
         })
@@ -583,7 +585,8 @@ describe('Suspense', () => {
 
     const AsyncInsideNestedSuspense = defineAsyncComponent(
       {
-        setup(props: { msg: string }) {
+        props: { msg: String },
+        setup(props: any) {
           onMounted(() => {
             calls.push(2)
           })
@@ -594,7 +597,8 @@ describe('Suspense', () => {
     )
 
     const AsyncChildParent = defineAsyncComponent({
-      setup(props: { msg: string }) {
+      props: { msg: String },
+      setup(props: any) {
         onMounted(() => {
           calls.push(1)
         })
@@ -604,7 +608,8 @@ describe('Suspense', () => {
 
     const NestedAsyncChild = defineAsyncComponent(
       {
-        setup(props: { msg: string }) {
+        props: { msg: String },
+        setup(props: any) {
           onMounted(() => {
             calls.push(3)
           })
@@ -731,5 +736,5 @@ describe('Suspense', () => {
     expect(serializeInner(root)).toBe(`<div>Child A</div><div>Child B</div>`)
   })
 
-  test.todo('portal inside suspense')
+  test.todo('teleport inside suspense')
 })

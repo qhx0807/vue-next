@@ -38,9 +38,15 @@ import {
 import {
   reactive,
   ComputedGetter,
-  WritableComputedOptions
+  WritableComputedOptions,
+  ComputedRef
 } from '@vue/reactivity'
-import { ComponentObjectPropsOptions, ExtractPropTypes } from './componentProps'
+import {
+  ComponentObjectPropsOptions,
+  ExtractPropTypes,
+  normalizePropsOptions
+} from './componentProps'
+import { EmitsOptions } from './componentEmits'
 import { Directive } from './directives'
 import { ComponentPublicInstance } from './componentProxy'
 import { warn } from './warning'
@@ -50,12 +56,14 @@ export interface ComponentOptionsBase<
   RawBindings,
   D,
   C extends ComputedOptions,
-  M extends MethodOptions
-> extends LegacyOptions<Props, RawBindings, D, C, M>, SFCInternalOptions {
+  M extends MethodOptions,
+  E extends EmitsOptions,
+  EE extends string = string
+> extends LegacyOptions<Props, D, C, M>, SFCInternalOptions {
   setup?: (
     this: void,
     props: Props,
-    ctx: SetupContext
+    ctx: SetupContext<E>
   ) => RawBindings | RenderFunction | void
   name?: string
   template?: string | object // can be a direct DOM node
@@ -75,6 +83,7 @@ export interface ComponentOptionsBase<
   components?: Record<string, PublicAPIComponent>
   directives?: Record<string, Directive>
   inheritAttrs?: boolean
+  emits?: E | EE[]
 
   // Internal ------------------------------------------------------------------
 
@@ -88,7 +97,7 @@ export interface ComponentOptionsBase<
   call?: never
   // type-only differentiators for built-in Vnode types
   __isFragment?: never
-  __isPortal?: never
+  __isTeleport?: never
   __isSuspense?: never
 }
 
@@ -97,10 +106,14 @@ export type ComponentOptionsWithoutProps<
   RawBindings = {},
   D = {},
   C extends ComputedOptions = {},
-  M extends MethodOptions = {}
-> = ComponentOptionsBase<Props, RawBindings, D, C, M> & {
+  M extends MethodOptions = {},
+  E extends EmitsOptions = EmitsOptions,
+  EE extends string = string
+> = ComponentOptionsBase<Props, RawBindings, D, C, M, E, EE> & {
   props?: undefined
-} & ThisType<ComponentPublicInstance<{}, RawBindings, D, C, M, Readonly<Props>>>
+} & ThisType<
+    ComponentPublicInstance<{}, RawBindings, D, C, M, E, Readonly<Props>>
+  >
 
 export type ComponentOptionsWithArrayProps<
   PropNames extends string = string,
@@ -108,10 +121,12 @@ export type ComponentOptionsWithArrayProps<
   D = {},
   C extends ComputedOptions = {},
   M extends MethodOptions = {},
+  E extends EmitsOptions = EmitsOptions,
+  EE extends string = string,
   Props = Readonly<{ [key in PropNames]?: any }>
-> = ComponentOptionsBase<Props, RawBindings, D, C, M> & {
+> = ComponentOptionsBase<Props, RawBindings, D, C, M, E, EE> & {
   props: PropNames[]
-} & ThisType<ComponentPublicInstance<Props, RawBindings, D, C, M>>
+} & ThisType<ComponentPublicInstance<Props, RawBindings, D, C, M, E>>
 
 export type ComponentOptionsWithObjectProps<
   PropsOptions = ComponentObjectPropsOptions,
@@ -119,10 +134,12 @@ export type ComponentOptionsWithObjectProps<
   D = {},
   C extends ComputedOptions = {},
   M extends MethodOptions = {},
+  E extends EmitsOptions = EmitsOptions,
+  EE extends string = string,
   Props = Readonly<ExtractPropTypes<PropsOptions>>
-> = ComponentOptionsBase<Props, RawBindings, D, C, M> & {
+> = ComponentOptionsBase<Props, RawBindings, D, C, M, E, EE> & {
   props: PropsOptions
-} & ThisType<ComponentPublicInstance<Props, RawBindings, D, C, M>>
+} & ThisType<ComponentPublicInstance<Props, RawBindings, D, C, M, E>>
 
 export type ComponentOptions =
   | ComponentOptionsWithoutProps<any, any, any, any, any>
@@ -162,7 +179,6 @@ type ComponentInjectOptions =
 
 export interface LegacyOptions<
   Props,
-  RawBindings,
   D,
   C extends ComputedOptions,
   M extends MethodOptions
@@ -228,6 +244,7 @@ export function applyOptions(
   options: ComponentOptions,
   asMixin: boolean = false
 ) {
+  const proxyTarget = instance.proxyTarget
   const ctx = instance.proxy!
   const {
     // composition
@@ -266,7 +283,7 @@ export function applyOptions(
 
   const globalMixins = instance.appContext.mixins
   // call it only during dev
-  const checkDuplicateProperties = __DEV__ ? createDuplicateChecker() : null
+
   // applyOptions is called non-as-mixin once per instance
   if (!asMixin) {
     callSyncHook('beforeCreate', options, ctx, globalMixins)
@@ -282,8 +299,10 @@ export function applyOptions(
     applyMixins(instance, mixins)
   }
 
+  const checkDuplicateProperties = __DEV__ ? createDuplicateChecker() : null
+
   if (__DEV__ && propsOptions) {
-    for (const key in propsOptions) {
+    for (const key in normalizePropsOptions(propsOptions)[0]) {
       checkDuplicateProperties!(OptionTypes.PROPS, key)
     }
   }
@@ -303,6 +322,7 @@ export function applyOptions(
       if (__DEV__) {
         for (const key in data) {
           checkDuplicateProperties!(OptionTypes.DATA, key)
+          if (!(key in proxyTarget)) proxyTarget[key] = data[key]
         }
       }
       instance.data = reactive(data)
@@ -315,9 +335,6 @@ export function applyOptions(
   if (computedOptions) {
     for (const key in computedOptions) {
       const opt = (computedOptions as ComputedOptions)[key]
-
-      __DEV__ && checkDuplicateProperties!(OptionTypes.COMPUTED, key)
-
       if (isFunction(opt)) {
         renderContext[key] = computed(opt.bind(ctx, ctx))
       } else {
@@ -339,6 +356,15 @@ export function applyOptions(
           warn(`Computed property "${key}" has no getter.`)
         }
       }
+      if (__DEV__) {
+        checkDuplicateProperties!(OptionTypes.COMPUTED, key)
+        if (renderContext[key] && !(key in proxyTarget)) {
+          Object.defineProperty(proxyTarget, key, {
+            enumerable: true,
+            get: () => (renderContext[key] as ComputedRef).value
+          })
+        }
+      }
     }
   }
 
@@ -346,8 +372,13 @@ export function applyOptions(
     for (const key in methods) {
       const methodHandler = (methods as MethodOptions)[key]
       if (isFunction(methodHandler)) {
-        __DEV__ && checkDuplicateProperties!(OptionTypes.METHODS, key)
         renderContext[key] = methodHandler.bind(ctx)
+        if (__DEV__) {
+          checkDuplicateProperties!(OptionTypes.METHODS, key)
+          if (!(key in proxyTarget)) {
+            proxyTarget[key] = renderContext[key]
+          }
+        }
       } else if (__DEV__) {
         warn(
           `Method "${key}" has type "${typeof methodHandler}" in the component definition. ` +
@@ -376,17 +407,23 @@ export function applyOptions(
     if (isArray(injectOptions)) {
       for (let i = 0; i < injectOptions.length; i++) {
         const key = injectOptions[i]
-        __DEV__ && checkDuplicateProperties!(OptionTypes.INJECT, key)
         renderContext[key] = inject(key)
+        if (__DEV__) {
+          checkDuplicateProperties!(OptionTypes.INJECT, key)
+          proxyTarget[key] = renderContext[key]
+        }
       }
     } else {
       for (const key in injectOptions) {
-        __DEV__ && checkDuplicateProperties!(OptionTypes.INJECT, key)
         const opt = injectOptions[key]
         if (isObject(opt)) {
           renderContext[key] = inject(opt.from, opt.default)
         } else {
           renderContext[key] = inject(opt)
+        }
+        if (__DEV__) {
+          checkDuplicateProperties!(OptionTypes.INJECT, key)
+          proxyTarget[key] = renderContext[key]
         }
       }
     }

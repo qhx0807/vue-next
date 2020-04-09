@@ -13,7 +13,6 @@ import {
 import {
   ComponentInternalInstance,
   Data,
-  SetupProxySymbol,
   Component,
   ClassComponent
 } from './component'
@@ -29,7 +28,7 @@ import { DirectiveBinding } from './directives'
 import { TransitionHooks } from './components/BaseTransition'
 import { warn } from './warning'
 import { currentScopeId } from './helpers/scopeId'
-import { PortalImpl, isPortal } from './components/Portal'
+import { TeleportImpl, isTeleport } from './components/Teleport'
 import { currentRenderingInstance } from './componentRenderUtils'
 import { RendererNode, RendererElement } from './renderer'
 
@@ -50,7 +49,7 @@ export type VNodeTypes =
   | typeof Static
   | typeof Comment
   | typeof Fragment
-  | typeof PortalImpl
+  | typeof TeleportImpl
   | typeof SuspenseImpl
 
 export type VNodeRef =
@@ -113,7 +112,8 @@ export interface VNode<HostNode = RendererNode, HostElement = RendererElement> {
   // DOM
   el: HostNode | null
   anchor: HostNode | null // fragment anchor
-  target: HostElement | null // portal target
+  target: HostElement | null // teleport target
+  targetAnchor: HostNode | null // teleport target anchor
 
   // optimization only
   shapeFlag: number
@@ -234,6 +234,8 @@ const createVNodeWithArgsTransform = (
   )
 }
 
+export const InternalObjectSymbol = Symbol()
+
 export const createVNode = (__DEV__
   ? createVNodeWithArgsTransform
   : _createVNode) as typeof _createVNode
@@ -260,7 +262,7 @@ function _createVNode(
   // class & style normalization.
   if (props) {
     // for reactive or proxy objects, we need to clone it to enable mutation.
-    if (isReactive(props) || SetupProxySymbol in props) {
+    if (isReactive(props) || InternalObjectSymbol in props) {
       props = extend({}, props)
     }
     let { class: klass, style } = props
@@ -282,8 +284,8 @@ function _createVNode(
     ? ShapeFlags.ELEMENT
     : __FEATURE_SUSPENSE__ && isSuspense(type)
       ? ShapeFlags.SUSPENSE
-      : isPortal(type)
-        ? ShapeFlags.PORTAL
+      : isTeleport(type)
+        ? ShapeFlags.TELEPORT
         : isObject(type)
           ? ShapeFlags.STATEFUL_COMPONENT
           : isFunction(type)
@@ -308,6 +310,7 @@ function _createVNode(
     el: null,
     anchor: null,
     target: null,
+    targetAnchor: null,
     shapeFlag,
     patchFlag,
     dynamicProps,
@@ -350,13 +353,14 @@ export function cloneVNode<T, U>(
     props: extraProps
       ? vnode.props
         ? mergeProps(vnode.props, extraProps)
-        : extraProps
+        : extend({}, extraProps)
       : vnode.props,
     key: vnode.key,
     ref: vnode.ref,
     scopeId: vnode.scopeId,
     children: vnode.children,
     target: vnode.target,
+    targetAnchor: vnode.targetAnchor,
     shapeFlag: vnode.shapeFlag,
     patchFlag: vnode.patchFlag,
     dynamicProps: vnode.dynamicProps,
@@ -427,14 +431,16 @@ export function normalizeChildren(vnode: VNode, children: unknown) {
   } else if (typeof children === 'object') {
     // Normalize slot to plain children
     if (
-      (shapeFlag & ShapeFlags.ELEMENT || shapeFlag & ShapeFlags.PORTAL) &&
+      (shapeFlag & ShapeFlags.ELEMENT || shapeFlag & ShapeFlags.TELEPORT) &&
       (children as any).default
     ) {
       normalizeChildren(vnode, (children as any).default())
       return
     } else {
       type = ShapeFlags.SLOTS_CHILDREN
-      if (!(children as RawSlots)._) {
+      if (!(children as RawSlots)._ && !(InternalObjectSymbol in children!)) {
+        // if slots are not normalized, attach context instance
+        // (compiled / normalized slots already have context)
         ;(children as RawSlots)._ctx = currentRenderingInstance
       }
     }
@@ -443,8 +449,8 @@ export function normalizeChildren(vnode: VNode, children: unknown) {
     type = ShapeFlags.SLOTS_CHILDREN
   } else {
     children = String(children)
-    // force portal children to array so it can be moved around
-    if (shapeFlag & ShapeFlags.PORTAL) {
+    // force teleport children to array so it can be moved around
+    if (shapeFlag & ShapeFlags.TELEPORT) {
       type = ShapeFlags.ARRAY_CHILDREN
       children = [createTextVNode(children as string)]
     } else {

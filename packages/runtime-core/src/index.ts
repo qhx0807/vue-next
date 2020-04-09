@@ -2,6 +2,7 @@
 
 export const version = __VERSION__
 export {
+  effect,
   ref,
   unref,
   shallowRef,
@@ -53,7 +54,7 @@ export {
 } from './vnode'
 // Internal Components
 export { Text, Comment, Fragment } from './vnode'
-export { Portal, PortalProps } from './components/Portal'
+export { Teleport, TeleportProps } from './components/Teleport'
 export { Suspense, SuspenseProps } from './components/Suspense'
 export { KeepAlive, KeepAliveProps } from './components/KeepAlive'
 export {
@@ -185,7 +186,7 @@ export {
   ComponentOptionsWithoutProps,
   ComponentOptionsWithObjectProps as ComponentOptionsWithProps,
   ComponentOptionsWithArrayProps
-} from './apiOptions'
+} from './componentOptions'
 export { ComponentPublicInstance } from './componentProxy'
 export {
   Renderer,
