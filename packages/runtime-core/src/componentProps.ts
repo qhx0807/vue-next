@@ -177,9 +177,25 @@ export function updateProps(
     setFullProps(instance, rawProps, props, attrs)
     // in case of dynamic props, check if we need to delete keys from
     // the props object
+    let kebabKey: string
     for (const key in rawCurrentProps) {
-      if (!rawProps || !hasOwn(rawProps, key)) {
-        delete props[key]
+      if (
+        !rawProps ||
+        (!hasOwn(rawProps, key) &&
+          // it's possible the original props was passed in as kebab-case
+          // and converted to camelCase (#955)
+          ((kebabKey = hyphenate(key)) === key || !hasOwn(rawProps, kebabKey)))
+      ) {
+        if (options) {
+          props[key] = resolvePropValue(
+            options,
+            rawProps || EMPTY_OBJ,
+            key,
+            undefined
+          )
+        } else {
+          delete props[key]
+        }
       }
     }
     for (const key in attrs) {
@@ -243,25 +259,24 @@ function resolvePropValue(
   key: string,
   value: unknown
 ) {
-  let opt = options[key]
-  if (opt == null) {
-    return value
-  }
-  const hasDefault = hasOwn(opt, 'default')
-  // default values
-  if (hasDefault && value === undefined) {
-    const defaultValue = opt.default
-    value = isFunction(defaultValue) ? defaultValue() : defaultValue
-  }
-  // boolean casting
-  if (opt[BooleanFlags.shouldCast]) {
-    if (!hasOwn(props, key) && !hasDefault) {
-      value = false
-    } else if (
-      opt[BooleanFlags.shouldCastTrue] &&
-      (value === '' || value === hyphenate(key))
-    ) {
-      value = true
+  const opt = options[key]
+  if (opt != null) {
+    const hasDefault = hasOwn(opt, 'default')
+    // default values
+    if (hasDefault && value === undefined) {
+      const defaultValue = opt.default
+      value = isFunction(defaultValue) ? defaultValue() : defaultValue
+    }
+    // boolean casting
+    if (opt[BooleanFlags.shouldCast]) {
+      if (!hasOwn(props, key) && !hasDefault) {
+        value = false
+      } else if (
+        opt[BooleanFlags.shouldCastTrue] &&
+        (value === '' || value === hyphenate(key))
+      ) {
+        value = true
+      }
     }
   }
   return value
