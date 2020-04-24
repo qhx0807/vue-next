@@ -3,16 +3,16 @@ import {
   reactive,
   ReactiveEffect,
   pauseTracking,
-  resetTracking
+  resetTracking,
+  shallowReadonly
 } from '@vue/reactivity'
 import {
   ComponentPublicInstance,
-  ComponentPublicProxyTarget,
   PublicInstanceProxyHandlers,
   RuntimeCompiledPublicInstanceProxyHandlers,
-  createDevProxyTarget,
-  exposePropsOnDevProxyTarget,
-  exposeRenderContextOnDevProxyTarget
+  createRenderContext,
+  exposePropsOnRenderContext,
+  exposeSetupStateOnRenderContext
 } from './componentProxy'
 import { ComponentPropsOptions, initProps } from './componentProps'
 import { Slots, initSlots, InternalSlots } from './componentSlots'
@@ -52,6 +52,7 @@ export interface SFCInternalOptions {
   __cssModules?: Data
   __hmrId?: string
   __hmrUpdated?: boolean
+  __file?: string
 }
 
 export interface FunctionalComponent<
@@ -135,28 +136,34 @@ export interface ComponentInternalInstance {
   components: Record<string, Component>
   directives: Record<string, Directive>
 
-  // the rest are only for stateful components
-  renderContext: Data
+  // the rest are only for stateful components ---------------------------------
+
+  // main proxy that serves as the public instance (`this`)
+  proxy: ComponentPublicInstance | null
+  // alternative proxy used only for runtime-compiled render functions using
+  // `with` block
+  withProxy: ComponentPublicInstance | null
+  // This is the target for the public instance proxy. It also holds properties
+  // injected by user options (computed, methods etc.) and user-attached
+  // custom properties (via `this.x = ...`)
+  ctx: Data
+
+  // internal state
   data: Data
   props: Data
   attrs: Data
   slots: InternalSlots
-  proxy: ComponentPublicInstance | null
-  proxyTarget: ComponentPublicProxyTarget
-  // alternative proxy used only for runtime-compiled render functions using
-  // `with` block
-  withProxy: ComponentPublicInstance | null
-  setupContext: SetupContext | null
   refs: Data
   emit: EmitFn
+
+  // setup
+  setupState: Data
+  setupContext: SetupContext | null
 
   // suspense related
   suspense: SuspenseBoundary | null
   asyncDep: Promise<any> | null
   asyncResolved: boolean
-
-  // storage for any extra properties
-  sink: { [key: string]: any }
 
   // lifecycle
   isMounted: boolean
@@ -204,21 +211,21 @@ export function createComponentInstance(
     update: null!, // will be set synchronously right after creation
     render: null,
     proxy: null,
-    proxyTarget: null!, // to be immediately set
     withProxy: null,
-    setupContext: null,
     effects: null,
     provides: parent ? parent.provides : Object.create(appContext.provides),
     accessCache: null!,
     renderCache: [],
 
-    // setup context properties
-    renderContext: EMPTY_OBJ,
+    // state
+    ctx: EMPTY_OBJ,
     data: EMPTY_OBJ,
     props: EMPTY_OBJ,
     attrs: EMPTY_OBJ,
     slots: EMPTY_OBJ,
     refs: EMPTY_OBJ,
+    setupState: EMPTY_OBJ,
+    setupContext: null,
 
     // per-instance asset storage (mutable during options resolution)
     components: Object.create(appContext.components),
@@ -228,10 +235,6 @@ export function createComponentInstance(
     suspense,
     asyncDep: null,
     asyncResolved: false,
-
-    // user namespace for storing whatever the user assigns to `this`
-    // can also be used as a wildcard storage for ad-hoc injections internally
-    sink: {},
 
     // lifecycle hooks
     // not using enums here because it results in computed properties
@@ -254,9 +257,9 @@ export function createComponentInstance(
     emit: null as any // to be set immediately
   }
   if (__DEV__) {
-    instance.proxyTarget = createDevProxyTarget(instance)
+    instance.ctx = createRenderContext(instance)
   } else {
-    instance.proxyTarget = { _: instance }
+    instance.ctx = { _: instance }
   }
   instance.root = parent ? parent.root : instance
   instance.emit = emit.bind(null, instance)
@@ -331,9 +334,9 @@ function setupStatefulComponent(
   // 0. create render proxy property access cache
   instance.accessCache = {}
   // 1. create public instance / render proxy
-  instance.proxy = new Proxy(instance.proxyTarget, PublicInstanceProxyHandlers)
+  instance.proxy = new Proxy(instance.ctx, PublicInstanceProxyHandlers)
   if (__DEV__) {
-    exposePropsOnDevProxyTarget(instance)
+    exposePropsOnRenderContext(instance)
   }
   // 2. call setup()
   const { setup } = Component
@@ -347,7 +350,7 @@ function setupStatefulComponent(
       setup,
       instance,
       ErrorCodes.SETUP_FUNCTION,
-      [instance.props, setupContext]
+      [__DEV__ ? shallowReadonly(instance.props) : instance.props, setupContext]
     )
     resetTracking()
     currentInstance = null
@@ -393,9 +396,9 @@ export function handleSetupResult(
     }
     // setup returned bindings.
     // assuming a render function compiled from template is present.
-    instance.renderContext = reactive(setupResult)
+    instance.setupState = reactive(setupResult)
     if (__DEV__) {
-      exposeRenderContextOnDevProxyTarget(instance)
+      exposeSetupStateOnRenderContext(instance)
     }
   } else if (__DEV__ && setupResult !== undefined) {
     warn(
@@ -449,9 +452,15 @@ function finishComponentSetup(
       /* istanbul ignore if */
       if (!compile && Component.template) {
         warn(
-          `Component provides template but the build of Vue you are running ` +
-            `does not support runtime template compilation. Either use the ` +
-            `full build or pre-compile the template using Vue CLI.`
+          `Component provided template option but ` +
+            `runtime compilation is not supported in this build of Vue.` +
+            (__ESM_BUNDLER__
+              ? ` Configure your bundler to alias "vue" to "vue/dist/vue.esm-bundler.js".`
+              : __ESM_BROWSER__
+                ? ` Use "vue.esm-browser.js" instead.`
+                : __GLOBAL__
+                  ? ` Use "vue.global.js" instead.`
+                  : ``) /* should not happen */
         )
       } else {
         warn(`Component is missing template or render function.`)
@@ -465,7 +474,7 @@ function finishComponentSetup(
     // also only allows a whitelist of globals to fallthrough.
     if (instance.render._rc) {
       instance.withProxy = new Proxy(
-        instance.proxyTarget,
+        instance.ctx,
         RuntimeCompiledPublicInstanceProxyHandlers
       )
     }
@@ -479,20 +488,11 @@ function finishComponentSetup(
   }
 }
 
-const slotsHandlers: ProxyHandler<InternalSlots> = {
-  set: () => {
-    warn(`setupContext.slots is readonly.`)
-    return false
-  },
-  deleteProperty: () => {
-    warn(`setupContext.slots is readonly.`)
-    return false
-  }
-}
-
 const attrHandlers: ProxyHandler<Data> = {
   get: (target, key: string) => {
-    markAttrsAccessed()
+    if (__DEV__) {
+      markAttrsAccessed()
+    }
     return target[key]
   },
   set: () => {
@@ -514,7 +514,7 @@ function createSetupContext(instance: ComponentInternalInstance): SetupContext {
         return new Proxy(instance.attrs, attrHandlers)
       },
       get slots() {
-        return new Proxy(instance.slots, slotsHandlers)
+        return shallowReadonly(instance.slots)
       },
       get emit() {
         return (event: string, ...args: any[]) => instance.emit(event, ...args)
@@ -543,16 +543,16 @@ const classify = (str: string): string =>
 
 export function formatComponentName(
   Component: Component,
-  file?: string
+  isRoot = false
 ): string {
   let name = isFunction(Component)
     ? Component.displayName || Component.name
     : Component.name
-  if (!name && file) {
-    const match = file.match(/([^/\\]+)\.vue$/)
+  if (!name && Component.__file) {
+    const match = Component.__file.match(/([^/\\]+)\.vue$/)
     if (match) {
       name = match[1]
     }
   }
-  return name ? classify(name) : 'Anonymous'
+  return name ? classify(name) : isRoot ? `App` : `Anonymous`
 }

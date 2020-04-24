@@ -1,4 +1,4 @@
-import { toRaw, lock, unlock, shallowReadonly } from '@vue/reactivity'
+import { toRaw, shallowReactive } from '@vue/reactivity'
 import {
   EMPTY_OBJ,
   camelize,
@@ -19,7 +19,7 @@ import {
 import { warn } from './warning'
 import { Data, ComponentInternalInstance } from './component'
 import { isEmitListener } from './componentEmits'
-import { InternalObjectSymbol } from './vnode'
+import { InternalObjectKey } from './vnode'
 
 export type ComponentPropsOptions<P = Data> =
   | ComponentObjectPropsOptions<P>
@@ -104,7 +104,7 @@ export function initProps(
 ) {
   const props: Data = {}
   const attrs: Data = {}
-  def(attrs, InternalObjectSymbol, true)
+  def(attrs, InternalObjectKey, 1)
   setFullProps(instance, rawProps, props, attrs)
   const options = instance.type.props
   // validation
@@ -114,7 +114,7 @@ export function initProps(
 
   if (isStateful) {
     // stateful
-    instance.props = isSSR ? props : shallowReadonly(props)
+    instance.props = isSSR ? props : shallowReactive(props)
   } else {
     if (!options) {
       // functional w/ optional props, props === attrs
@@ -130,11 +130,9 @@ export function initProps(
 export function updateProps(
   instance: ComponentInternalInstance,
   rawProps: Data | null,
+  rawPrevProps: Data | null,
   optimized: boolean
 ) {
-  // allow mutation of propsProxy (which is readonly by default)
-  unlock()
-
   const {
     props,
     attrs,
@@ -187,26 +185,29 @@ export function updateProps(
           ((kebabKey = hyphenate(key)) === key || !hasOwn(rawProps, kebabKey)))
       ) {
         if (options) {
-          props[key] = resolvePropValue(
-            options,
-            rawProps || EMPTY_OBJ,
-            key,
-            undefined
-          )
+          if (rawPrevProps && rawPrevProps[kebabKey!] !== undefined) {
+            props[key] = resolvePropValue(
+              options,
+              rawProps || EMPTY_OBJ,
+              key,
+              undefined
+            )
+          }
         } else {
           delete props[key]
         }
       }
     }
-    for (const key in attrs) {
-      if (!rawProps || !hasOwn(rawProps, key)) {
-        delete attrs[key]
+    // in the case of functional component w/o props declaration, props and
+    // attrs point to the same object so it should already have been updated.
+    if (attrs !== rawCurrentProps) {
+      for (const key in attrs) {
+        if (!rawProps || !hasOwn(rawProps, key)) {
+          delete attrs[key]
+        }
       }
     }
   }
-
-  // lock readonly
-  lock()
 
   if (__DEV__ && rawOptions && rawProps) {
     validateProps(props, rawOptions)
@@ -246,9 +247,15 @@ function setFullProps(
   }
 
   if (needCastKeys) {
+    const rawCurrentProps = toRaw(props)
     for (let i = 0; i < needCastKeys.length; i++) {
       const key = needCastKeys[i]
-      props[key] = resolvePropValue(options!, props, key, props[key])
+      props[key] = resolvePropValue(
+        options!,
+        rawCurrentProps,
+        key,
+        rawCurrentProps[key]
+      )
     }
   }
 }

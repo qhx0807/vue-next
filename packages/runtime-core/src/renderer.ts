@@ -53,7 +53,7 @@ import {
   SuspenseImpl
 } from './components/Suspense'
 import { TeleportImpl } from './components/Teleport'
-import { KeepAliveSink, isKeepAlive } from './components/KeepAlive'
+import { isKeepAlive, KeepAliveContext } from './components/KeepAlive'
 import { registerHMR, unregisterHMR } from './hmr'
 import {
   ErrorCodes,
@@ -63,8 +63,6 @@ import {
 import { createHydrationFunctions, RootHydrateFunction } from './hydration'
 import { invokeDirectiveHook } from './directives'
 import { startMeasure, endMeasure } from './profiling'
-
-const __HMR__ = __BUNDLER__ && __DEV__
 
 export interface Renderer<HostElement = any> {
   render: RootRenderFunction<HostElement>
@@ -660,7 +658,7 @@ function baseCreateRenderer(
       invokeDirectiveHook(n2, n1, parentComponent, 'beforeUpdate')
     }
 
-    if (__HMR__ && parentComponent && parentComponent.renderUpdated) {
+    if (__DEV__ && parentComponent && parentComponent.renderUpdated) {
       // HMR updated, force full diff
       patchFlag = 0
       optimized = false
@@ -884,7 +882,7 @@ function baseCreateRenderer(
       optimized = true
     }
 
-    if (__HMR__ && parentComponent && parentComponent.renderUpdated) {
+    if (__DEV__ && parentComponent && parentComponent.renderUpdated) {
       // HMR updated, force full diff
       patchFlag = 0
       optimized = false
@@ -949,7 +947,7 @@ function baseCreateRenderer(
   ) => {
     if (n1 == null) {
       if (n2.shapeFlag & ShapeFlags.COMPONENT_KEPT_ALIVE) {
-        ;(parentComponent!.sink as KeepAliveSink).activate(
+        ;(parentComponent!.ctx as KeepAliveContext).activate(
           n2,
           container,
           anchor,
@@ -987,7 +985,7 @@ function baseCreateRenderer(
       parentSuspense
     ))
 
-    if (__HMR__ && instance.type.__hmrId) {
+    if (__DEV__ && instance.type.__hmrId) {
       registerHMR(instance)
     }
 
@@ -998,9 +996,7 @@ function baseCreateRenderer(
 
     // inject renderer internals for keepAlive
     if (isKeepAlive(initialVNode)) {
-      const sink = instance.sink as KeepAliveSink
-      sink.renderer = internals
-      sink.parentSuspense = parentSuspense
+      ;(instance.ctx as KeepAliveContext).renderer = internals
     }
 
     // resolve props and slots for setup context
@@ -1250,9 +1246,10 @@ function baseCreateRenderer(
     optimized: boolean
   ) => {
     nextVNode.component = instance
+    const prevProps = instance.vnode.props
     instance.vnode = nextVNode
     instance.next = null
-    updateProps(instance, nextVNode.props, optimized)
+    updateProps(instance, nextVNode.props, prevProps, optimized)
     updateSlots(instance, nextVNode.children)
   }
 
@@ -1721,7 +1718,7 @@ function baseCreateRenderer(
 
     if (shapeFlag & ShapeFlags.COMPONENT) {
       if (shapeFlag & ShapeFlags.COMPONENT_SHOULD_KEEP_ALIVE) {
-        ;(parentComponent!.sink as KeepAliveSink).deactivate(vnode)
+        ;(parentComponent!.ctx as KeepAliveContext).deactivate(vnode)
       } else {
         unmountComponent(vnode.component!, parentSuspense, doRemove)
       }
@@ -1809,7 +1806,7 @@ function baseCreateRenderer(
     parentSuspense: SuspenseBoundary | null,
     doRemove?: boolean
   ) => {
-    if (__HMR__ && instance.type.__hmrId) {
+    if (__DEV__ && instance.type.__hmrId) {
       unregisterHMR(instance)
     }
 
@@ -1901,14 +1898,14 @@ function baseCreateRenderer(
     }
     const oldRef = oldRawRef && oldRawRef[1]
     const refs = owner.refs === EMPTY_OBJ ? (owner.refs = {}) : owner.refs
-    const renderContext = owner.renderContext
+    const setupState = owner.setupState
 
     // unset old ref
     if (oldRef != null && oldRef !== ref) {
       if (isString(oldRef)) {
         refs[oldRef] = null
-        if (hasOwn(renderContext, oldRef)) {
-          renderContext[oldRef] = null
+        if (hasOwn(setupState, oldRef)) {
+          setupState[oldRef] = null
         }
       } else if (isRef(oldRef)) {
         oldRef.value = null
@@ -1917,8 +1914,8 @@ function baseCreateRenderer(
 
     if (isString(ref)) {
       refs[ref] = value
-      if (hasOwn(renderContext, ref)) {
-        renderContext[ref] = value
+      if (hasOwn(setupState, ref)) {
+        setupState[ref] = value
       }
     } else if (isRef(ref)) {
       ref.value = value

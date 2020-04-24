@@ -40,7 +40,7 @@ import {
   reactive,
   ComputedGetter,
   WritableComputedOptions,
-  ComputedRef
+  toRaw
 } from '@vue/reactivity'
 import {
   ComponentObjectPropsOptions,
@@ -52,6 +52,24 @@ import { Directive } from './directives'
 import { ComponentPublicInstance } from './componentProxy'
 import { warn } from './warning'
 
+/**
+ * Interface for declaring custom options.
+ *
+ * @example
+ * ```ts
+ * declare module '@vue/runtime-core' {
+ *   interface ComponentCustomOptions {
+ *     beforeRouteUpdate?(
+ *       to: Route,
+ *       from: Route,
+ *       next: () => void
+ *     ): void
+ *   }
+ * }
+ * ```
+ */
+export interface ComponentCustomOptions {}
+
 export interface ComponentOptionsBase<
   Props,
   RawBindings,
@@ -60,7 +78,10 @@ export interface ComponentOptionsBase<
   M extends MethodOptions,
   E extends EmitsOptions,
   EE extends string = string
-> extends LegacyOptions<Props, D, C, M>, SFCInternalOptions {
+>
+  extends LegacyOptions<Props, D, C, M>,
+    SFCInternalOptions,
+    ComponentCustomOptions {
   setup?: (
     this: void,
     props: Props,
@@ -240,13 +261,15 @@ function createDuplicateChecker() {
   }
 }
 
+type DataFn = (vm: ComponentPublicInstance) => any
+
 export function applyOptions(
   instance: ComponentInternalInstance,
   options: ComponentOptions,
+  deferredData: DataFn[] = [],
+  deferredWatch: ComponentWatchOptions[] = [],
   asMixin: boolean = false
 ) {
-  const proxyTarget = instance.proxyTarget
-  const ctx = instance.proxy!
   const {
     // composition
     mixins,
@@ -276,28 +299,24 @@ export function applyOptions(
     errorCaptured
   } = options
 
-  const renderContext =
-    instance.renderContext === EMPTY_OBJ &&
-    (computedOptions || methods || watchOptions || injectOptions)
-      ? (instance.renderContext = reactive({}))
-      : instance.renderContext
-
+  const publicThis = instance.proxy!
+  const ctx = instance.ctx
   const globalMixins = instance.appContext.mixins
   // call it only during dev
 
   // applyOptions is called non-as-mixin once per instance
   if (!asMixin) {
-    callSyncHook('beforeCreate', options, ctx, globalMixins)
+    callSyncHook('beforeCreate', options, publicThis, globalMixins)
     // global mixins are applied first
-    applyMixins(instance, globalMixins)
+    applyMixins(instance, globalMixins, deferredData, deferredWatch)
   }
   // extending a base component...
   if (extendsOptions) {
-    applyOptions(instance, extendsOptions, true)
+    applyOptions(instance, extendsOptions, deferredData, deferredWatch, true)
   }
   // local mixins
   if (mixins) {
-    applyMixins(instance, mixins)
+    applyMixins(instance, mixins, deferredData, deferredWatch)
   }
 
   const checkDuplicateProperties = __DEV__ ? createDuplicateChecker() : null
@@ -308,69 +327,33 @@ export function applyOptions(
     }
   }
 
-  // state options
-  if (dataOptions) {
-    if (__DEV__ && !isFunction(dataOptions)) {
-      warn(
-        `The data option must be a function. ` +
-          `Plain object usage is no longer supported.`
-      )
-    }
-    const data = dataOptions.call(ctx, ctx)
-    if (__DEV__ && isPromise(data)) {
-      warn(
-        `data() returned a Promise - note data() cannot be async; If you ` +
-          `intend to perform data fetching before component renders, use ` +
-          `async setup() + <Suspense>.`
-      )
-    }
-    if (!isObject(data)) {
-      __DEV__ && warn(`data() should return an object.`)
-    } else if (instance.data === EMPTY_OBJ) {
-      if (__DEV__) {
-        for (const key in data) {
-          checkDuplicateProperties!(OptionTypes.DATA, key)
-          if (!(key in proxyTarget)) proxyTarget[key] = data[key]
-        }
-      }
-      instance.data = reactive(data)
-    } else {
-      // existing data: this is a mixin or extends.
-      extend(instance.data, data)
-    }
-  }
+  // options initialization order (to be consistent with Vue 2):
+  // - props (already done outside of this function)
+  // - inject
+  // - methods
+  // - data (deferred since it relies on `this` access)
+  // - computed
+  // - watch (deferred since it relies on `this` access)
 
-  if (computedOptions) {
-    for (const key in computedOptions) {
-      const opt = (computedOptions as ComputedOptions)[key]
-      if (isFunction(opt)) {
-        renderContext[key] = computed(opt.bind(ctx, ctx))
-      } else {
-        const { get, set } = opt
-        if (isFunction(get)) {
-          renderContext[key] = computed({
-            get: get.bind(ctx, ctx),
-            set: isFunction(set)
-              ? set.bind(ctx)
-              : __DEV__
-                ? () => {
-                    warn(
-                      `Computed property "${key}" was assigned to but it has no setter.`
-                    )
-                  }
-                : NOOP
-          })
-        } else if (__DEV__) {
-          warn(`Computed property "${key}" has no getter.`)
+  if (injectOptions) {
+    if (isArray(injectOptions)) {
+      for (let i = 0; i < injectOptions.length; i++) {
+        const key = injectOptions[i]
+        ctx[key] = inject(key)
+        if (__DEV__) {
+          checkDuplicateProperties!(OptionTypes.INJECT, key)
         }
       }
-      if (__DEV__) {
-        checkDuplicateProperties!(OptionTypes.COMPUTED, key)
-        if (renderContext[key] && !(key in proxyTarget)) {
-          Object.defineProperty(proxyTarget, key, {
-            enumerable: true,
-            get: () => (renderContext[key] as ComputedRef).value
-          })
+    } else {
+      for (const key in injectOptions) {
+        const opt = injectOptions[key]
+        if (isObject(opt)) {
+          ctx[key] = inject(opt.from, opt.default)
+        } else {
+          ctx[key] = inject(opt)
+        }
+        if (__DEV__) {
+          checkDuplicateProperties!(OptionTypes.INJECT, key)
         }
       }
     }
@@ -380,12 +363,9 @@ export function applyOptions(
     for (const key in methods) {
       const methodHandler = (methods as MethodOptions)[key]
       if (isFunction(methodHandler)) {
-        renderContext[key] = methodHandler.bind(ctx)
+        ctx[key] = methodHandler.bind(publicThis)
         if (__DEV__) {
           checkDuplicateProperties!(OptionTypes.METHODS, key)
-          if (!(key in proxyTarget)) {
-            proxyTarget[key] = renderContext[key]
-          }
         }
       } else if (__DEV__) {
         warn(
@@ -396,44 +376,93 @@ export function applyOptions(
     }
   }
 
-  if (watchOptions) {
-    for (const key in watchOptions) {
-      createWatcher(watchOptions[key], renderContext, ctx, key)
+  if (dataOptions) {
+    if (__DEV__ && !isFunction(dataOptions)) {
+      warn(
+        `The data option must be a function. ` +
+          `Plain object usage is no longer supported.`
+      )
     }
+
+    if (asMixin) {
+      deferredData.push(dataOptions as DataFn)
+    } else {
+      resolveData(instance, dataOptions, publicThis)
+    }
+  }
+  if (!asMixin) {
+    if (deferredData.length) {
+      deferredData.forEach(dataFn => resolveData(instance, dataFn, publicThis))
+    }
+    if (__DEV__) {
+      const rawData = toRaw(instance.data)
+      for (const key in rawData) {
+        checkDuplicateProperties!(OptionTypes.DATA, key)
+        // expose data on ctx during dev
+        Object.defineProperty(ctx, key, {
+          configurable: true,
+          enumerable: true,
+          get: () => rawData[key],
+          set: NOOP
+        })
+      }
+    }
+  }
+
+  if (computedOptions) {
+    for (const key in computedOptions) {
+      const opt = (computedOptions as ComputedOptions)[key]
+      const get = isFunction(opt)
+        ? opt.bind(publicThis, publicThis)
+        : isFunction(opt.get)
+          ? opt.get.bind(publicThis, publicThis)
+          : NOOP
+      if (__DEV__ && get === NOOP) {
+        warn(`Computed property "${key}" has no getter.`)
+      }
+      const set =
+        !isFunction(opt) && isFunction(opt.set)
+          ? opt.set.bind(publicThis)
+          : __DEV__
+            ? () => {
+                warn(
+                  `Write operation failed: computed property "${key}" is readonly.`
+                )
+              }
+            : NOOP
+      const c = computed({
+        get,
+        set
+      })
+      Object.defineProperty(ctx, key, {
+        enumerable: true,
+        configurable: true,
+        get: () => c.value,
+        set: v => (c.value = v)
+      })
+      if (__DEV__) {
+        checkDuplicateProperties!(OptionTypes.COMPUTED, key)
+      }
+    }
+  }
+
+  if (watchOptions) {
+    deferredWatch.push(watchOptions)
+  }
+  if (!asMixin && deferredWatch.length) {
+    deferredWatch.forEach(watchOptions => {
+      for (const key in watchOptions) {
+        createWatcher(watchOptions[key], ctx, publicThis, key)
+      }
+    })
   }
 
   if (provideOptions) {
     const provides = isFunction(provideOptions)
-      ? provideOptions.call(ctx)
+      ? provideOptions.call(publicThis)
       : provideOptions
     for (const key in provides) {
       provide(key, provides[key])
-    }
-  }
-
-  if (injectOptions) {
-    if (isArray(injectOptions)) {
-      for (let i = 0; i < injectOptions.length; i++) {
-        const key = injectOptions[i]
-        renderContext[key] = inject(key)
-        if (__DEV__) {
-          checkDuplicateProperties!(OptionTypes.INJECT, key)
-          proxyTarget[key] = renderContext[key]
-        }
-      }
-    } else {
-      for (const key in injectOptions) {
-        const opt = injectOptions[key]
-        if (isObject(opt)) {
-          renderContext[key] = inject(opt.from, opt.default)
-        } else {
-          renderContext[key] = inject(opt)
-        }
-        if (__DEV__) {
-          checkDuplicateProperties!(OptionTypes.INJECT, key)
-          proxyTarget[key] = renderContext[key]
-        }
-      }
     }
   }
 
@@ -447,40 +476,40 @@ export function applyOptions(
 
   // lifecycle options
   if (!asMixin) {
-    callSyncHook('created', options, ctx, globalMixins)
+    callSyncHook('created', options, publicThis, globalMixins)
   }
   if (beforeMount) {
-    onBeforeMount(beforeMount.bind(ctx))
+    onBeforeMount(beforeMount.bind(publicThis))
   }
   if (mounted) {
-    onMounted(mounted.bind(ctx))
+    onMounted(mounted.bind(publicThis))
   }
   if (beforeUpdate) {
-    onBeforeUpdate(beforeUpdate.bind(ctx))
+    onBeforeUpdate(beforeUpdate.bind(publicThis))
   }
   if (updated) {
-    onUpdated(updated.bind(ctx))
+    onUpdated(updated.bind(publicThis))
   }
   if (activated) {
-    onActivated(activated.bind(ctx))
+    onActivated(activated.bind(publicThis))
   }
   if (deactivated) {
-    onDeactivated(deactivated.bind(ctx))
+    onDeactivated(deactivated.bind(publicThis))
   }
   if (errorCaptured) {
-    onErrorCaptured(errorCaptured.bind(ctx))
+    onErrorCaptured(errorCaptured.bind(publicThis))
   }
   if (renderTracked) {
-    onRenderTracked(renderTracked.bind(ctx))
+    onRenderTracked(renderTracked.bind(publicThis))
   }
   if (renderTriggered) {
-    onRenderTriggered(renderTriggered.bind(ctx))
+    onRenderTriggered(renderTriggered.bind(publicThis))
   }
   if (beforeUnmount) {
-    onBeforeUnmount(beforeUnmount.bind(ctx))
+    onBeforeUnmount(beforeUnmount.bind(publicThis))
   }
   if (unmounted) {
-    onUnmounted(unmounted.bind(ctx))
+    onUnmounted(unmounted.bind(publicThis))
   }
 }
 
@@ -520,34 +549,59 @@ function callHookFromMixins(
 
 function applyMixins(
   instance: ComponentInternalInstance,
-  mixins: ComponentOptions[]
+  mixins: ComponentOptions[],
+  deferredData: DataFn[],
+  deferredWatch: ComponentWatchOptions[]
 ) {
   for (let i = 0; i < mixins.length; i++) {
-    applyOptions(instance, mixins[i], true)
+    applyOptions(instance, mixins[i], deferredData, deferredWatch, true)
+  }
+}
+
+function resolveData(
+  instance: ComponentInternalInstance,
+  dataFn: DataFn,
+  publicThis: ComponentPublicInstance
+) {
+  const data = dataFn.call(publicThis, publicThis)
+  if (__DEV__ && isPromise(data)) {
+    warn(
+      `data() returned a Promise - note data() cannot be async; If you ` +
+        `intend to perform data fetching before component renders, use ` +
+        `async setup() + <Suspense>.`
+    )
+  }
+  if (!isObject(data)) {
+    __DEV__ && warn(`data() should return an object.`)
+  } else if (instance.data === EMPTY_OBJ) {
+    instance.data = reactive(data)
+  } else {
+    // existing data: this is a mixin or extends.
+    extend(instance.data, data)
   }
 }
 
 function createWatcher(
   raw: ComponentWatchOptionItem,
-  renderContext: Data,
-  ctx: ComponentPublicInstance,
+  ctx: Data,
+  publicThis: ComponentPublicInstance,
   key: string
 ) {
-  const getter = () => (ctx as Data)[key]
+  const getter = () => (publicThis as any)[key]
   if (isString(raw)) {
-    const handler = renderContext[raw]
+    const handler = ctx[raw]
     if (isFunction(handler)) {
       watch(getter, handler as WatchCallback)
     } else if (__DEV__) {
       warn(`Invalid watch handler specified by key "${raw}"`, handler)
     }
   } else if (isFunction(raw)) {
-    watch(getter, raw.bind(ctx))
+    watch(getter, raw.bind(publicThis))
   } else if (isObject(raw)) {
     if (isArray(raw)) {
-      raw.forEach(r => createWatcher(r, renderContext, ctx, key))
+      raw.forEach(r => createWatcher(r, ctx, publicThis, key))
     } else {
-      watch(getter, raw.handler.bind(ctx), raw)
+      watch(getter, raw.handler.bind(publicThis), raw)
     }
   } else if (__DEV__) {
     warn(`Invalid watch option: "${key}"`)
